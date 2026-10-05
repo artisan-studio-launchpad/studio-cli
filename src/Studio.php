@@ -27,6 +27,7 @@ use ArtisanStudio\StudioCli\Saloon\Requests\SubmitScanFlagsRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\SubmitScanToolResultsRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\SubmitScanWorkRequest;
 use ArtisanStudio\StudioCli\Saloon\StudioConnector;
+use ArtisanStudio\StudioCli\Scan\Tools\DefinedTool;
 use Closure;
 use RuntimeException;
 use Saloon\Http\Request;
@@ -162,6 +163,7 @@ class Studio
     public function scanTools(): ?array
     {
         $answer = $this->quietly(new ShowScanToolsRequest($this->project()));
+        is_array($answer['definitions'] ?? null) && DefinedTool::keep(base_path(), $answer['definitions']);
 
         return is_array($answer['tools'] ?? null) ? array_values(array_filter($answer['tools'], is_string(...))) : null;
     }
