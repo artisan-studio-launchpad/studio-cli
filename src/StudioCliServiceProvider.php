@@ -9,6 +9,7 @@ use ArtisanStudio\StudioCli\Console\BlueprintCommand;
 use ArtisanStudio\StudioCli\Console\BuildPresenceCommand;
 use ArtisanStudio\StudioCli\Console\CheckCommand;
 use ArtisanStudio\StudioCli\Console\ConventionsCommand;
+use ArtisanStudio\StudioCli\Console\FixCommand;
 use ArtisanStudio\StudioCli\Console\InstallToolsCommand;
 use ArtisanStudio\StudioCli\Console\PhpStanCommand;
 use ArtisanStudio\StudioCli\Console\RenderCommand;
@@ -17,6 +18,7 @@ use ArtisanStudio\StudioCli\Console\ToolsCommand;
 use ArtisanStudio\StudioCli\Dashboard\LiveSnapshots;
 use ArtisanStudio\StudioCli\Dashboard\SnapshotSource;
 use ArtisanStudio\StudioCli\Events\StudioReported;
+use ArtisanStudio\StudioCli\Fix\FixLauncher;
 use ArtisanStudio\StudioCli\Fix\FixProgress;
 use ArtisanStudio\StudioCli\Scan\ScanProgress;
 use ArtisanStudio\StudioCli\Scan\ToolStatus;
@@ -69,6 +71,8 @@ class StudioCliServiceProvider extends ServiceProvider
 
         $this->app->singleton(ToolStatus::class, fn (): ToolStatus => new ToolStatus($this->app->basePath()));
 
+        $this->app->singleton(FixLauncher::class, fn (): FixLauncher => new FixLauncher($this->app->make(BackgroundTasks::class), $this->app->basePath()));
+
         $this->app->singleton(FixProgress::class, fn (): FixProgress => new FixProgress($this->app->basePath()));
 
         $this->app->singleton(TaskJournal::class, fn (): TaskJournal => TaskJournal::fromEnvironment());
@@ -91,6 +95,7 @@ class StudioCliServiceProvider extends ServiceProvider
             BlueprintCommand::class,
             BuildPresenceCommand::class,
             ConventionsCommand::class,
+            FixCommand::class,
             InstallToolsCommand::class,
             PhpStanCommand::class,
             CheckCommand::class,
