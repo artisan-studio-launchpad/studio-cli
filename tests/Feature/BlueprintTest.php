@@ -7,20 +7,25 @@ use ArtisanStudio\StudioCli\BackgroundTasks;
 use ArtisanStudio\StudioCli\Blueprint;
 use ArtisanStudio\StudioCli\Console\BlueprintCommand;
 use ArtisanStudio\StudioCli\Events\StudioReported;
+use ArtisanStudio\StudioCli\Fix\FixProgress;
 use ArtisanStudio\StudioCli\LocalChanges;
 use ArtisanStudio\StudioCli\Saloon\Requests\SubmitBlueprintRequest;
 use ArtisanStudio\StudioCli\Scan\ToolStatus;
+use ArtisanStudio\StudioCli\StateFile;
 use ArtisanStudio\StudioCli\Terminal\ScreenRequests;
 use ArtisanStudio\StudioCli\Tests\Fixtures\Blueprint\Models\Broken;
 use ArtisanStudio\StudioCli\Tests\Fixtures\Blueprint\Models\Customer;
 use ArtisanStudio\StudioCli\Tests\Fixtures\Blueprint\Models\Invoice;
 use ArtisanStudio\StudioCli\Tests\Fixtures\Blueprint\Models\InvoiceStatus;
+use ArtisanStudio\StudioCli\Work\WorkLauncher;
+use ArtisanStudio\StudioCli\Work\WorkProgress;
 use Illuminate\Database\Eloquent\ModelInspector;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 use Saloon\Http\Faking\MockResponse;
 use Saloon\Http\PendingRequest;
 use Saloon\Laravel\Facades\Saloon;
+use Symfony\Component\Process\Process;
 
 beforeEach(function (): void {
     config([
@@ -236,6 +241,51 @@ it('starts measuring code coverage in the background the moment it is picked, be
     @unlink(app(ToolStatus::class)->path());
 });
 
+it('stops what the scan is running, and everything that started, when the developer resets it in the app', function (): void {
+    $root = sys_get_temp_dir().'/studio-reset-'.bin2hex(random_bytes(4));
+    @mkdir($root, 0755, true);
+    file_put_contents($root.'/artisan', '<?php sleep(30);');
+    $tasks = app()->instance(BackgroundTasks::class, new BackgroundTasks($root, app(ActivityLog::class)));
+    app(ToolStatus::class)->testsFinished(['ran' => true, 'took' => 1000, 'summary' => ['tests' => 10, 'failed' => 0, 'skipped' => 0]]);
+
+    $fixes = app(FixProgress::class);
+    $fixes->begin('studio/fixes-reset', ['pint'], ['pint' => 3]);
+    $fixes->finished(['pint' => 0]);
+
+    $tasks->start('tools', 'Scan tools', 'Running the extra checks you picked…', ['studio:tools']);
+    $tasks->start(WorkLauncher::RECHECKS, 'Check again', 'Checking the places you marked as done…', ['studio:work', '--rechecks']);
+
+    expect($tasks->isRunning('tools'))->toBeTrue()
+        ->and($tasks->isRunning(WorkLauncher::RECHECKS))->toBeTrue();
+
+    event(new StudioReported(['type' => 'reset', 'kind' => 'project']));
+
+    expect($tasks->isRunning('tools'))->toBeFalse()
+        ->and($tasks->isRunning(WorkLauncher::RECHECKS))->toBeFalse()
+        ->and(app(ActivityLog::class)->ofKinds(['tools'])[0])->toMatchArray(['detail' => 'Stopped, because the scan was reset.', 'colour' => 'amber'])
+        ->and(app(ToolStatus::class)->tests())->toBeNull()
+        ->and($fixes->read())->toBeNull();
+});
+
+it('acts once on a reset made while the terminal was closed, when the studio says it again on connecting', function (): void {
+    $resetAt = (int) (microtime(true) * 1000) + 60_000;
+    @unlink(StateFile::for('reset', base_path(), '.txt'));
+    app(ToolStatus::class)->testsFinished(['ran' => true, 'took' => 1000, 'summary' => ['tests' => 10, 'failed' => 0, 'skipped' => 0]]);
+    $fixes = app(FixProgress::class);
+    $fixes->begin('studio/fixes-closed', ['pint'], ['pint' => 3]);
+    $fixes->finished(['pint' => 0]);
+
+    event(new StudioReported(['type' => 'reset', 'kind' => 'project', 'reset_at' => $resetAt, 'history' => true]));
+
+    expect($fixes->read())->toBeNull()
+        ->and(app(ToolStatus::class)->tests())->toBeNull();
+
+    app(ToolStatus::class)->testsFinished(['ran' => true, 'took' => 1000, 'summary' => ['tests' => 12, 'failed' => 0, 'skipped' => 0]]);
+
+    event(new StudioReported(['type' => 'reset', 'kind' => 'project', 'reset_at' => $resetAt, 'history' => true]));
+
+    expect(app(ToolStatus::class)->tests())->not->toBeNull();
+});
 it('only maps the blueprint when asked', function (): void {
     Saloon::fake([SubmitBlueprintRequest::class => MockResponse::make(['accepted' => 2], 202)]);
 
@@ -252,4 +302,65 @@ it('says so in the activity feed when the studio does not take it', function ():
     untilBothFinish($tasks);
 
     expect(app(ActivityLog::class)->ofKinds(['blueprint'])[0])->toMatchArray(['detail' => 'The studio did not take the blueprint.', 'colour' => 'amber']);
+});
+
+it('stops a fix run still going when the scan is reset, and clears it from the terminal', function (): void {
+    $run = new Process(['sleep', '30']);
+    $run->start();
+    $fixes = app(FixProgress::class);
+    file_put_contents($fixes->path(), (string) json_encode(['phase' => FixProgress::FIXING, 'branch' => 'studio/fixes-reset', 'at' => microtime(true), 'pid' => $run->getPid(), 'rulesets' => ['rector' => ['state' => FixProgress::RUNNING, 'found' => 3, 'fixed' => 0, 'files' => 0]]]));
+    @unlink(StateFile::for('reset', base_path(), '.txt'));
+
+    expect($fixes->isAlive())->toBeTrue();
+
+    event(new StudioReported(['type' => 'reset', 'kind' => 'project', 'reset_at' => (int) (microtime(true) * 1000) + 1000]));
+    usleep(300_000);
+
+    expect($run->isRunning())->toBeFalse()
+        ->and($fixes->read())->toBeNull();
+});
+
+it('stops the work on a job when the scan is reset, and clears its card and question from the terminal', function (): void {
+    $run = new Process(['sleep', '30']);
+    $run->start();
+    $work = app(WorkProgress::class);
+    file_put_contents($work->path(), (string) json_encode(['phase' => WorkProgress::STOPPED, 'session' => 4, 'job' => 'livewire', 'name' => 'Livewire safety', 'mode' => 'terminal', 'branch' => 'studio/fixes-reset', 'files' => ['app/Livewire/Cart.php'], 'at' => microtime(true), 'pid' => $run->getPid(), 'batches' => [], 'question' => ['batch' => 1, 'files' => ['app/Livewire/Cart.php'], 'reason' => 'Check it on your machine.', 'options' => ['approve', 'stop']], 'answer' => null, 'reason' => null]));
+    @unlink(StateFile::for('reset', base_path(), '.txt'));
+
+    expect($work->isAlive())->toBeTrue();
+
+    event(new StudioReported(['type' => 'reset', 'kind' => 'project', 'reset_at' => (int) (microtime(true) * 1000) + 1000]));
+    usleep(300_000);
+
+    expect($run->isRunning())->toBeFalse()
+        ->and($work->read())->toBeNull();
+});
+
+it('clears a finished work run from the terminal when the scan is reset', function (): void {
+    $work = app(WorkProgress::class);
+    $work->begin(2, 'livewire', 'Livewire safety', 'terminal', 'studio/fixes-reset', ['app/Livewire/Cart.php']);
+    $work->finished('You stopped me.');
+    @unlink(StateFile::for('reset', base_path(), '.txt'));
+
+    expect($work->read())->not->toBeNull();
+
+    event(new StudioReported(['type' => 'reset', 'kind' => 'project', 'reset_at' => (int) (microtime(true) * 1000) + 1000]));
+
+    expect($work->read())->toBeNull();
+});
+
+it('leaves a work run started after the reset alone when the studio says that reset again on connecting', function (): void {
+    $run = new Process(['sleep', '30']);
+    $run->start();
+    $work = app(WorkProgress::class);
+    file_put_contents($work->path(), (string) json_encode(['phase' => WorkProgress::WORKING, 'session' => 5, 'job' => 'livewire', 'name' => 'Livewire safety', 'mode' => 'terminal', 'branch' => 'studio/fixes-later', 'files' => ['app/Livewire/Cart.php'], 'at' => microtime(true), 'pid' => $run->getPid(), 'batches' => [], 'question' => null, 'answer' => null, 'reason' => null]));
+    @unlink(StateFile::for('reset', base_path(), '.txt'));
+
+    event(new StudioReported(['type' => 'reset', 'kind' => 'project', 'reset_at' => (int) (microtime(true) * 1000) - 60_000, 'history' => true]));
+    usleep(300_000);
+
+    expect($run->isRunning())->toBeTrue()
+        ->and($work->read())->toMatchArray(['session' => 5, 'phase' => WorkProgress::WORKING]);
+
+    $run->stop();
 });

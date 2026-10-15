@@ -9,6 +9,7 @@ use ArtisanStudio\StudioCli\Dashboard\SnapshotSource;
 use ArtisanStudio\StudioCli\Says;
 use ArtisanStudio\StudioCli\StateFile;
 use ArtisanStudio\StudioCli\StudioCliServiceProvider;
+use ArtisanStudio\StudioCli\Work\WorkPanel;
 use Illuminate\Foundation\Application;
 use Orchestra\Testbench\TestCase as Orchestra;
 use Saloon\Laravel\SaloonServiceProvider;
@@ -49,7 +50,7 @@ abstract class TestCase extends Orchestra
 
             public function has(string $tab, string $moment): bool
             {
-                return true;
+                return $tab !== WorkPanel::BUILD || in_array($moment, ['prototype', 'working', 'final', 'done', 'halted', 'died'], true);
             }
         });
     }

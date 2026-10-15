@@ -15,6 +15,7 @@ use ArtisanStudio\StudioCli\Console\PhpStanCommand;
 use ArtisanStudio\StudioCli\Console\RenderCommand;
 use ArtisanStudio\StudioCli\Console\TestsCommand;
 use ArtisanStudio\StudioCli\Console\ToolsCommand;
+use ArtisanStudio\StudioCli\Console\WorkCommand;
 use ArtisanStudio\StudioCli\Dashboard\LiveSnapshots;
 use ArtisanStudio\StudioCli\Dashboard\SnapshotSource;
 use ArtisanStudio\StudioCli\Events\StudioReported;
@@ -24,6 +25,8 @@ use ArtisanStudio\StudioCli\Scan\ScanProgress;
 use ArtisanStudio\StudioCli\Scan\ToolStatus;
 use ArtisanStudio\StudioCli\Scan\Walk;
 use ArtisanStudio\StudioCli\Terminal\ScreenRequests;
+use ArtisanStudio\StudioCli\Work\WorkLauncher;
+use ArtisanStudio\StudioCli\Work\WorkProgress;
 use Illuminate\Database\Eloquent\ModelInspector;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
@@ -47,6 +50,8 @@ class StudioCliServiceProvider extends ServiceProvider
 
         $this->app->singleton(LocalChanges::class, fn (): LocalChanges => new LocalChanges($this->app->basePath()));
 
+        $this->app->singleton(Editor::class, fn (): Editor => new Editor($this->app->basePath()));
+
         $this->app->singleton(EnvFile::class, fn (): EnvFile => new EnvFile($this->app->basePath('.env')));
 
         $this->app->singleton(TestSuite::class, fn (): TestSuite => new TestSuite($this->app->basePath()));
@@ -69,11 +74,15 @@ class StudioCliServiceProvider extends ServiceProvider
 
         $this->app->singleton(ScanProgress::class, fn (): ScanProgress => new ScanProgress($this->app->basePath()));
 
-        $this->app->singleton(ToolStatus::class, fn (): ToolStatus => new ToolStatus($this->app->basePath()));
-
         $this->app->singleton(FixLauncher::class, fn (): FixLauncher => new FixLauncher($this->app->make(BackgroundTasks::class), $this->app->basePath()));
 
         $this->app->singleton(FixProgress::class, fn (): FixProgress => new FixProgress($this->app->basePath()));
+
+        $this->app->singleton(WorkProgress::class, fn (): WorkProgress => new WorkProgress($this->app->basePath()));
+
+        $this->app->singleton(WorkLauncher::class, fn (): WorkLauncher => new WorkLauncher($this->app->make(BackgroundTasks::class), $this->app->make(WorkProgress::class)));
+
+        $this->app->singleton(ToolStatus::class, fn (): ToolStatus => new ToolStatus($this->app->basePath()));
 
         $this->app->singleton(TaskJournal::class, fn (): TaskJournal => TaskJournal::fromEnvironment());
 
@@ -102,6 +111,7 @@ class StudioCliServiceProvider extends ServiceProvider
             RenderCommand::class,
             TestsCommand::class,
             ToolsCommand::class,
+            WorkCommand::class,
         ]);
 
         $this->publishes([
@@ -151,15 +161,76 @@ class StudioCliServiceProvider extends ServiceProvider
         }
 
         $resetAt = is_int($reported->event['reset_at'] ?? null) ? $reported->event['reset_at'] : null;
+        $isNew = $this->isNewReset($resetAt);
 
-        if (! $this->isNewReset($resetAt)) {
+        if ($isNew) {
+            $this->stopTheFixRunBefore($resetAt);
+            $this->stopTheWorkBefore($resetAt);
+            $this->app->make(BackgroundTasks::class)->stop([...self::SCAN_TASKS, WorkLauncher::RECHECKS]);
+            $this->app->make(ToolStatus::class)->forget();
+            $this->app->make(ScanProgress::class)->finished();
+            $this->app->make(SnapshotSource::class)->forget();
+        }
+
+        $this->forgetFixesBefore($resetAt, stopped: $isNew);
+        $this->forgetWorkBefore($resetAt, stopped: $isNew);
+    }
+
+    private function stopTheFixRunBefore(?int $resetAt): void
+    {
+        $fixes = $this->app->make(FixProgress::class);
+        $run = $fixes->read();
+
+        if ($run === null || ! $fixes->isAlive() || ($resetAt !== null && $resetAt <= $run['at'] * 1000)) {
             return;
         }
 
-        $this->app->make(BackgroundTasks::class)->stop(self::SCAN_TASKS);
-        $this->app->make(ToolStatus::class)->forget();
-        $this->app->make(ScanProgress::class)->finished();
+        $this->app->make(BackgroundTasks::class)->stop([FixLauncher::TASK]);
+
+        if ($run['pid'] !== null && $fixes->isAlive()) {
+            ProcessTree::stop($run['pid']);
+        }
+    }
+
+    private function forgetFixesBefore(?int $resetAt, bool $stopped = false): void
+    {
+        $fixes = $this->app->make(FixProgress::class);
+        $run = $fixes->read();
+
+        if ($run === null || ($fixes->isAlive() && ! $stopped) || ($resetAt !== null && $resetAt <= $run['at'] * 1000)) {
+            return;
+        }
+
+        $fixes->forget();
         $this->app->make(SnapshotSource::class)->forget();
+    }
+
+    private function stopTheWorkBefore(?int $resetAt): void
+    {
+        $work = $this->app->make(WorkProgress::class);
+        $run = $work->read();
+
+        if ($run === null || ! $work->isAlive() || ($resetAt !== null && $resetAt <= $run['at'] * 1000)) {
+            return;
+        }
+
+        $this->app->make(BackgroundTasks::class)->stop([WorkLauncher::TASK]);
+
+        if ($run['pid'] !== null && $work->isAlive()) {
+            ProcessTree::stop($run['pid']);
+        }
+    }
+
+    private function forgetWorkBefore(?int $resetAt, bool $stopped = false): void
+    {
+        $work = $this->app->make(WorkProgress::class);
+        $run = $work->read();
+
+        if ($run === null || ($work->isAlive() && ! $stopped) || ($resetAt !== null && $resetAt <= $run['at'] * 1000)) {
+            return;
+        }
+
+        $work->forget();
     }
 
     private function isNewReset(?int $resetAt): bool
