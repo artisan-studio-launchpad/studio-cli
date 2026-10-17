@@ -6,15 +6,22 @@ namespace ArtisanStudio\StudioCli;
 
 use ArtisanStudio\StudioCli\Console\AvatarSyncCommand;
 use ArtisanStudio\StudioCli\Console\BlueprintCommand;
+use ArtisanStudio\StudioCli\Console\BuildCommand;
 use ArtisanStudio\StudioCli\Console\BuildPresenceCommand;
 use ArtisanStudio\StudioCli\Console\CheckCommand;
 use ArtisanStudio\StudioCli\Console\ConventionsCommand;
+use ArtisanStudio\StudioCli\Console\DashboardCommand;
 use ArtisanStudio\StudioCli\Console\FixCommand;
+use ArtisanStudio\StudioCli\Console\InsightsCommand;
 use ArtisanStudio\StudioCli\Console\InstallToolsCommand;
 use ArtisanStudio\StudioCli\Console\PhpStanCommand;
 use ArtisanStudio\StudioCli\Console\RenderCommand;
+use ArtisanStudio\StudioCli\Console\ScanCommand;
+use ArtisanStudio\StudioCli\Console\SettingsCommand;
+use ArtisanStudio\StudioCli\Console\StudioCommand;
 use ArtisanStudio\StudioCli\Console\TestsCommand;
 use ArtisanStudio\StudioCli\Console\ToolsCommand;
+use ArtisanStudio\StudioCli\Console\WatchCommand;
 use ArtisanStudio\StudioCli\Console\WorkCommand;
 use ArtisanStudio\StudioCli\Dashboard\LiveSnapshots;
 use ArtisanStudio\StudioCli\Dashboard\SnapshotSource;
@@ -28,11 +35,14 @@ use ArtisanStudio\StudioCli\Terminal\ScreenRequests;
 use ArtisanStudio\StudioCli\Work\WorkLauncher;
 use ArtisanStudio\StudioCli\Work\WorkProgress;
 use Illuminate\Database\Eloquent\ModelInspector;
+use Illuminate\Foundation\DevCommands;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
 
 class StudioCliServiceProvider extends ServiceProvider
 {
+    public const string DEV_TAB_COMMAND = StudioCommand::SIGNATURE.' activity --tab';
+
     /**
      * What a scan runs in the background, by task.
      *
@@ -102,15 +112,22 @@ class StudioCliServiceProvider extends ServiceProvider
         $this->commands([
             AvatarSyncCommand::class,
             BlueprintCommand::class,
+            BuildCommand::class,
             BuildPresenceCommand::class,
             ConventionsCommand::class,
+            DashboardCommand::class,
             FixCommand::class,
+            InsightsCommand::class,
             InstallToolsCommand::class,
             PhpStanCommand::class,
+            SettingsCommand::class,
+            ScanCommand::class,
             CheckCommand::class,
             RenderCommand::class,
+            StudioCommand::class,
             TestsCommand::class,
             ToolsCommand::class,
+            WatchCommand::class,
             WorkCommand::class,
         ]);
 
@@ -125,6 +142,8 @@ class StudioCliServiceProvider extends ServiceProvider
         Event::listen(StudioReported::class, $this->runTheToolsWhenAsked(...));
 
         Event::listen(StudioReported::class, $this->stopTheScanWhenReset(...));
+
+        $this->registerDevTab();
     }
 
     private function refetchWhenTheStudioChanges(StudioReported $reported): void
@@ -262,6 +281,7 @@ class StudioCliServiceProvider extends ServiceProvider
         if ($tools !== []) {
             $status->asked($tools);
             $status->pick($tools);
+            $this->app->make(ScreenRequests::class)->show(ScanCommand::TAB);
         }
 
         $tasks = $this->app->make(BackgroundTasks::class);
@@ -275,5 +295,27 @@ class StudioCliServiceProvider extends ServiceProvider
         }
 
         $tasks->start('tools', 'Scan tools', 'Running the extra checks you picked…', [ToolsCommand::SIGNATURE]);
+    }
+
+    private function registerDevTab(): void
+    {
+        if (config('studio-cli.dev_tab.enabled', false) === false) {
+            return;
+        }
+
+        if (! class_exists(DevCommands::class)) {
+            return;
+        }
+
+        if (! config('studio-cli.dev_tab.until_linked', false) && ! $this->app->make(Studio::class)->isLinked()) {
+            return;
+        }
+
+        $this->app->booted(function (): void {
+            DevCommands::artisan(
+                self::DEV_TAB_COMMAND,
+                (string) config('studio-cli.dev_tab.name', 'Artisan Studio'),
+            )->color((string) config('studio-cli.dev_tab.color', '#22d3ee'));
+        });
     }
 }
