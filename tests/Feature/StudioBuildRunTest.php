@@ -345,6 +345,17 @@ it('opens each file in the developer\'s editor as it is written, so they can fol
     Processes::assertRanTimes(fn ($process): bool => str_contains(implode(' ', (array) $process->command), 'phpstorm://open?file='), 3);
 });
 
+it('records the build\'s prototype in the app so it can be opened by its build, and tells the studio where the app is', function (): void {
+    config(['app.url' => 'https://shop.test']);
+    $this->plan['prototype_component'] = 'App\\Livewire\\Prototype\\CoverageReport';
+    $ask = [...($this->ask)(), 'build' => '01a15b59-5b9b-70ad-8c19-b13a3c0393a5'];
+
+    ($this->run)()->run($ask);
+
+    expect(json_decode((string) file_get_contents($this->root.'/storage/app/studio-cli/prototypes.json'), true))->toBe(['01a15b59-5b9b-70ad-8c19-b13a3c0393a5' => 'App\\Livewire\\Prototype\\CoverageReport'])
+        ->and(collect(($this->sent)('SubmitScanWorkRequest'))->pluck('app_url')->filter()->values()->all())->toBe(['https://shop.test']);
+});
+
 it('opens nothing at the end when the plan names no page to open', function (): void {
     file_put_contents($this->root.'/artisan', "<?php\nfile_put_contents(__DIR__.'/opened.log', (\$argv[2] ?? '').\"\\n\", FILE_APPEND);\necho json_encode(['path' => \$argv[2] ?? '', 'status' => 200]);\n");
     ($this->git)('add', '-A');

@@ -65,6 +65,21 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Prototypes
+    |--------------------------------------------------------------------------
+    |
+    | A build's prototype opens in your app at /prototype/{build}, full page
+    | with ?full-page, and in a modal over any page with ?prototype={build}.
+    | Served only while your app runs locally, unless you say otherwise here.
+    |
+    */
+
+    'prototypes' => [
+        'serve' => env('STUDIO_CLI_SERVE_PROTOTYPES'),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Branches and commits
     |--------------------------------------------------------------------------
     |

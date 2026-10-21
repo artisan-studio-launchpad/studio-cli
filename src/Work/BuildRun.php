@@ -6,6 +6,7 @@ namespace ArtisanStudio\StudioCli\Work;
 
 use ArtisanStudio\StudioCli\Editor;
 use ArtisanStudio\StudioCli\Fix\LocalBranch;
+use ArtisanStudio\StudioCli\Prototype\Prototypes;
 use ArtisanStudio\StudioCli\Says;
 use ArtisanStudio\StudioCli\Studio;
 use ArtisanStudio\StudioCli\TaskJournal;
@@ -133,6 +134,8 @@ final class BuildRun
         $paths = array_merge([], ...array_map(fn (array $step): array => array_column($step['files'], 'path'), $steps));
         $this->progress->begin($this->session, self::JOB, $name, 'terminal', $this->branch, $paths);
         $this->studio->submitScanWork(['session' => $this->session, 'state' => 'running', 'branch' => $this->branch, 'from' => $this->from, 'refused' => null, 'batches' => []]);
+        preg_match('#^https?://[^\s/?\#]+(:\d+)?/?$#', (string) config('app.url')) === 1 && $this->studio->submitScanWork(['session' => $this->session, 'app_url' => (string) config('app.url')]);
+        is_string($ask['build'] ?? null) && is_string($plan['prototype_component'] ?? null) && Prototypes::at($this->root)->remember($ask['build'], $plan['prototype_component']);
         $this->progress->planned(count($steps));
         $this->say(sprintf('I build %s on %s in %d %s. I write each step, check it and commit it on its own, and at the end I stop once so you can try your app.', $name, $this->branch, count($steps), count($steps) === 1 ? 'step' : 'steps'));
         array_map(fn (array $step): mixed => $this->queued($step), $steps);

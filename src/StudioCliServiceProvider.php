@@ -28,14 +28,20 @@ use ArtisanStudio\StudioCli\Dashboard\SnapshotSource;
 use ArtisanStudio\StudioCli\Events\StudioReported;
 use ArtisanStudio\StudioCli\Fix\FixLauncher;
 use ArtisanStudio\StudioCli\Fix\FixProgress;
+use ArtisanStudio\StudioCli\Prototype\PrototypeController;
+use ArtisanStudio\StudioCli\Prototype\ShowsPrototype;
 use ArtisanStudio\StudioCli\Scan\ScanProgress;
 use ArtisanStudio\StudioCli\Scan\ToolStatus;
 use ArtisanStudio\StudioCli\Scan\Walk;
 use ArtisanStudio\StudioCli\Terminal\ScreenRequests;
 use ArtisanStudio\StudioCli\Work\WorkLauncher;
 use ArtisanStudio\StudioCli\Work\WorkProgress;
+use Closure;
+use Illuminate\Contracts\Http\Kernel as HttpKernel;
 use Illuminate\Database\Eloquent\ModelInspector;
 use Illuminate\Foundation\DevCommands;
+use Illuminate\Foundation\Http\Kernel;
+use Illuminate\Routing\Router;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
 
@@ -101,10 +107,16 @@ class StudioCliServiceProvider extends ServiceProvider
         $this->app->singleton(SnapshotSource::class, LiveSnapshots::class);
 
         $this->app->singleton(Presence::class);
+
+        $this->app->bind('studio-cli.prototype.mount', fn (): Closure => fn (string $component): string => (string) app('livewire')->mount($component));
+
+        $this->app->bind('studio-cli.prototype.page', fn (): Closure => fn (string $component): mixed => app()->call(app('livewire')->new($component)->__invoke(...)));
     }
 
     public function boot(): void
     {
+        $this->servePrototypes();
+
         if (! $this->app->runningInConsole()) {
             return;
         }
@@ -295,6 +307,16 @@ class StudioCliServiceProvider extends ServiceProvider
         }
 
         $tasks->start('tools', 'Scan tools', 'Running the extra checks you picked…', [ToolsCommand::SIGNATURE]);
+    }
+
+    private function servePrototypes(): void
+    {
+        if ($this->app->environment('production')) {
+            return;
+        }
+
+        $this->app->make(Router::class)->middleware('web')->get('prototype/{build}', PrototypeController::class)->whereUuid('build')->name('studio-cli.prototype');
+        $this->callAfterResolving(HttpKernel::class, fn (Kernel $kernel): Kernel => $kernel->appendMiddlewareToGroup('web', ShowsPrototype::class));
     }
 
     private function registerDevTab(): void
