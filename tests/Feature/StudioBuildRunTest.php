@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use ArtisanStudio\StudioCli\Editor;
 use ArtisanStudio\StudioCli\Fix\LocalBranch;
 use ArtisanStudio\StudioCli\Saloon\Requests\ShowScanWorkRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\SubmitScanFixReportRequest;
@@ -13,6 +14,7 @@ use ArtisanStudio\StudioCli\TaskJournal;
 use ArtisanStudio\StudioCli\Work\BuildRun;
 use ArtisanStudio\StudioCli\Work\StepChecks;
 use ArtisanStudio\StudioCli\Work\WorkProgress;
+use Illuminate\Support\Facades\Process as Processes;
 use Saloon\Http\Faking\MockResponse;
 use Saloon\Laravel\Facades\Saloon;
 use Symfony\Component\Process\Process;
@@ -217,8 +219,10 @@ it('opens the finished build\'s page, and has the step that wrote the file the a
 
     $opened = array_values(array_filter(explode("\n", (string) file_get_contents($this->root.'/opened.log')), fn (string $line): bool => $line === '/coverage'));
     $failed = collect(($this->proposals)())->pluck('propose.failed')->filter()->values()->all();
+    $again = collect(($this->proposals)())->first(fn (array $body): bool => ($body['propose']['failed'] ?? null) !== null);
 
-    expect($opened)->toHaveCount(2)
+    expect($again['propose']['files'])->toBe([['path' => 'app/Models/CoverageRun.php', 'content' => "<?php\n\nnamespace App\\Models;\n\nclass CoverageRunBroken\n{\n}\n"]])
+        ->and($opened)->toHaveCount(2)
         ->and($failed)->toBe(['Opening /coverage in the app failed with: RuntimeException: The model is Broken (app/Models/CoverageRun.php:5)'])
         ->and(file_get_contents($this->root.'/app/Models/CoverageRun.php'))->toContain('class CoverageRun')->not->toContain('Broken')
         ->and(($this->git)('status', '--porcelain'))->toBe('?? opened.log');
@@ -294,6 +298,29 @@ it('copies the signed-off prototype as the base of the real build, and the build
         ->and(file_get_contents($this->root.'/app/Livewire/CoverageReport.php'))->toContain('namespace App\\Livewire;')->toContain('public array $runs = [];');
 });
 
+it('keeps a file as it is when the studio says what was asked has nothing to do with it', function (): void {
+    file_put_contents($this->root.'/artisan', <<<'PHP'
+        <?php
+        $broken = str_contains((string) file_get_contents(__DIR__.'/app/Models/CoverageRun.php'), 'Broken');
+        echo json_encode(['path' => $argv[2] ?? '', 'status' => $broken ? 500 : 200, 'redirect' => null, 'error' => $broken ? 'RuntimeException: The model is Broken' : null, 'where' => $broken ? 'app/Models/CoverageRun.php:5' : null]);
+        PHP);
+    ($this->git)('add', '-A');
+    ($this->git)('commit', '--quiet', '-m', 'artisan');
+    $this->plan['built_at'] = '/coverage';
+    $this->replies['app/Models/CoverageRun.php'] = [
+        ['content' => "<?php\n\nnamespace App\\Models;\n\nclass CoverageRunBroken\n{\n}\n", 'edits' => [], 'note' => 'Written.'],
+        ['content' => null, 'edits' => [], 'note' => 'Nothing here is about that.', 'unneeded' => true],
+        ['content' => null, 'edits' => [], 'note' => 'Nothing here is about that.', 'unneeded' => true],
+    ];
+
+    ($this->run)()->run(($this->ask)());
+
+    $notes = collect(($this->sent)('SubmitScanWorkRequest'))->pluck('said')->filter()->values();
+
+    expect(file_get_contents($this->root.'/app/Models/CoverageRun.php'))->toContain('class CoverageRunBroken')
+        ->and($notes->contains(fn (string $line): bool => str_contains($line, 'not written')))->toBeFalse();
+});
+
 it('writes nothing again when the finished page turns the developer\'s user away', function (): void {
     file_put_contents($this->root.'/artisan', "<?php\necho json_encode(['path' => \$argv[2] ?? '', 'status' => 403, 'redirect' => null, 'error' => 'AccessDeniedHttpException: This action is unauthorized.', 'where' => null]);\n");
     ($this->git)('add', '-A');
@@ -306,6 +333,16 @@ it('writes nothing again when the finished page turns the developer\'s user away
 
     expect(collect(($this->proposals)())->pluck('propose.failed')->filter()->all())->toBe([])
         ->and($said)->toContain('/coverage does not let your user in, so I could not see it render.');
+});
+
+it('opens each file in the developer\'s editor as it is written, so they can follow along', function (): void {
+    config(['studio-cli.review.editor' => Editor::PHPSTORM]);
+    Processes::fake(['*phpstorm://*' => Processes::result()]);
+
+    (new BuildRun($this->root, app(Studio::class), new LocalBranch($this->root), new WorkProgress($this->root), new TaskJournal(null), new StepChecks($this->root, new Toolbox($this->root)), 0, 0, editor: new Editor($this->root)))->run(($this->ask)());
+
+    Processes::assertRanTimes(fn ($process): bool => str_contains(implode(' ', (array) $process->command), 'phpstorm://open?file=') && str_contains(implode(' ', (array) $process->command), 'CoverageRun.php'), 1);
+    Processes::assertRanTimes(fn ($process): bool => str_contains(implode(' ', (array) $process->command), 'phpstorm://open?file='), 3);
 });
 
 it('opens nothing at the end when the plan names no page to open', function (): void {

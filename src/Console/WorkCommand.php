@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ArtisanStudio\StudioCli\Console;
 
 use ArtisanStudio\StudioCli\BackgroundTasks;
+use ArtisanStudio\StudioCli\Editor;
 use ArtisanStudio\StudioCli\Fix\LocalBranch;
 use ArtisanStudio\StudioCli\Scan\Tools\Toolbox;
 use ArtisanStudio\StudioCli\Scan\ToolStatus;
@@ -77,7 +78,7 @@ class WorkCommand extends Command
         }
 
         $built = ($ask['job'] ?? null) === BuildRun::JOB
-            ? new BuildRun(base_path(), $studio, new LocalBranch(base_path()), $progress, $journal, new StepChecks(base_path(), $toolbox), tests: $testsOn ? new CoveringTests(base_path(), $toolbox) : null)
+            ? new BuildRun(base_path(), $studio, new LocalBranch(base_path()), $progress, $journal, new StepChecks(base_path(), $toolbox), tests: $testsOn ? new CoveringTests(base_path(), $toolbox) : null, editor: app(Editor::class))
             : null;
 
         return $this->outcome($built?->run($ask) ?? $run->run($ask), self::SUCCESS);

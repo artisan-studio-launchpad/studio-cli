@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ArtisanStudio\StudioCli\Work;
 
+use ArtisanStudio\StudioCli\Editor;
 use ArtisanStudio\StudioCli\Fix\LocalBranch;
 use ArtisanStudio\StudioCli\Says;
 use ArtisanStudio\StudioCli\Studio;
@@ -100,6 +101,7 @@ final class BuildRun
         private readonly int $pollSeconds = 1,
         private readonly int $pickupSeconds = 300,
         private readonly ?CoveringTests $tests = null,
+        private readonly ?Editor $editor = null,
     ) {}
 
     /**
@@ -271,6 +273,10 @@ final class BuildRun
         $opened = $this->renders($at);
         $error = $opened['error'];
         $fixing = $error === null || $opened['missing'] || $opened['denied'] ? null : $this->stepThatWrote($steps, $error);
+
+        if ($error === null && $opened['redirect'] === null && ! $opened['missing'] && ! $opened['denied']) {
+            $this->studio->submitScanWork(['session' => $this->session, 'opened' => $opened['path']]);
+        }
 
         if ($fixing === null || $tries === 0) {
             $this->say(match (true) {
@@ -500,6 +506,7 @@ final class BuildRun
                 $creating && $this->created[] = $path;
                 $this->built = array_values(array_unique([...$this->built, $path]));
                 $this->step($path.': '.($creating ? 'written' : 'changed').'.'.($file['note'] === '' ? '' : ' '.$file['note']));
+                $this->editor?->open([$path]);
             });
         $this->arrived = [];
     }
@@ -511,7 +518,7 @@ final class BuildRun
     {
         $path = $this->root.'/'.$file['path'];
 
-        return $file['action'] === 'change' && is_file($path) && filesize($path) <= self::LARGEST_FILE ? (string) file_get_contents($path) : '';
+        return ($file['action'] === 'change' || in_array($file['path'], $this->created, true)) && is_file($path) && filesize($path) <= self::LARGEST_FILE ? (string) file_get_contents($path) : '';
     }
 
     /**
@@ -553,6 +560,7 @@ final class BuildRun
         $file = $this->root.'/'.$path;
         $next = match (true) {
             str_contains($path, '..') || str_starts_with($path, '/') || preg_match('/(^|\/)\.env(?!\.example$)(\.|$)/', $path) === 1 => ['error' => 'I never write '.$path.'.'],
+            ($proposal['unneeded'] ?? false) === true && is_file($file) => ['content' => (string) file_get_contents($file)],
             $content !== '' && is_file($file) && ! in_array($path, $this->created, true) => ['error' => 'It is already on your machine, so I did not write over it.'],
             $content !== '' => ['content' => $content],
             $edits !== [] && is_file($file) => EditApplier::apply((string) file_get_contents($file), $edits),
