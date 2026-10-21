@@ -50,11 +50,11 @@ trait ChecksTheMachine
      * Opens a page of the app as its latest user, in a fresh process so new
      * routes and classes are read from disk.
      *
-     * @return array{error: ?string, redirect: ?string, missing: bool, path: string}
+     * @return array{error: ?string, redirect: ?string, missing: bool, denied: bool, path: string}
      */
     private function renders(string $path): array
     {
-        $none = ['error' => null, 'redirect' => null, 'missing' => false, 'path' => $path];
+        $none = ['error' => null, 'redirect' => null, 'missing' => false, 'denied' => false, 'path' => $path];
 
         if (! is_file($this->root.'/artisan')) {
             return $none;
@@ -79,6 +79,7 @@ trait ChecksTheMachine
             'error' => is_string($result['error'] ?? null) ? $result['error'].(is_string($result['where'] ?? null) ? ' ('.$result['where'].')' : '') : null,
             'redirect' => is_string($result['redirect'] ?? null) ? $result['redirect'] : null,
             'missing' => (int) ($result['status'] ?? 0) === 404,
+            'denied' => in_array((int) ($result['status'] ?? 0), [401, 403], true),
             'path' => is_string($result['path'] ?? null) ? $result['path'] : $path,
         ];
     }

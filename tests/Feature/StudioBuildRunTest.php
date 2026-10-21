@@ -197,3 +197,123 @@ it('starts a build branch by the plan\'s name, numbers it on when that name is t
         ->and(LocalBranch::isStudioBranch('studio/fixes-x'))->toBeTrue()
         ->and(LocalBranch::isStudioBranch('feature/x'))->toBeFalse();
 });
+
+it('opens the finished build\'s page, and has the step that wrote the file the app names write it again from what the app said', function (): void {
+    file_put_contents($this->root.'/artisan', <<<'PHP'
+        <?php
+        $broken = str_contains((string) file_get_contents(__DIR__.'/app/Models/CoverageRun.php'), 'Broken');
+        file_put_contents(__DIR__.'/opened.log', ($argv[2] ?? '')."\n", FILE_APPEND);
+        echo json_encode(['path' => $argv[2] ?? '', 'status' => $broken ? 500 : 200, 'redirect' => null, 'error' => $broken ? 'RuntimeException: The model is Broken' : null, 'where' => $broken ? 'app/Models/CoverageRun.php:5' : null]);
+        PHP);
+    ($this->git)('add', '-A');
+    ($this->git)('commit', '--quiet', '-m', 'artisan');
+    $this->plan['built_at'] = '/coverage';
+    $this->replies['app/Models/CoverageRun.php'] = [
+        ['content' => "<?php\n\nnamespace App\\Models;\n\nclass CoverageRunBroken\n{\n}\n", 'edits' => [], 'note' => 'Written.'],
+        ['content' => "<?php\n\nnamespace App\\Models;\n\nclass CoverageRun\n{\n}\n", 'edits' => [], 'note' => 'Fixed.'],
+    ];
+
+    ($this->run)()->run(($this->ask)());
+
+    $opened = array_values(array_filter(explode("\n", (string) file_get_contents($this->root.'/opened.log')), fn (string $line): bool => $line === '/coverage'));
+    $failed = collect(($this->proposals)())->pluck('propose.failed')->filter()->values()->all();
+
+    expect($opened)->toHaveCount(2)
+        ->and($failed)->toBe(['Opening /coverage in the app failed with: RuntimeException: The model is Broken (app/Models/CoverageRun.php:5)'])
+        ->and(file_get_contents($this->root.'/app/Models/CoverageRun.php'))->toContain('class CoverageRun')->not->toContain('Broken')
+        ->and(($this->git)('status', '--porcelain'))->toBe('?? opened.log');
+});
+
+it('writes again only the build\'s own file the app names, never the prototype\'s, when the finished page does not render', function (): void {
+    file_put_contents($this->root.'/artisan', <<<'PHP'
+        <?php
+        $path = $argv[2] ?? '';
+        $broken = $path === '/coverage' && str_contains((string) file_get_contents(__DIR__.'/routes/web.php'), 'Broken');
+        echo json_encode(['path' => $path, 'status' => $broken ? 500 : 200, 'redirect' => null, 'error' => $broken ? 'ErrorException: The route is Broken' : null, 'where' => $broken ? 'routes/web.php:6' : null]);
+        PHP);
+    ($this->git)('add', '-A');
+    ($this->git)('commit', '--quiet', '-m', 'artisan');
+    $this->answer = ['decision' => 'approve', 'note' => null];
+    $this->plan['prototype_at'] = '/prototype/coverage';
+    $this->plan['built_at'] = '/coverage';
+    $this->plan['steps'] = [
+        ['number' => 1, 'role' => 'spark', 'name' => 'Prototype', 'tone' => '#ffb020', 'title' => 'The prototype', 'line' => 'I show it.', 'prototype' => true, 'files' => [
+            ['path' => 'app/Models/Prototype/CoverageRun.php', 'action' => 'create', 'what' => 'Sample coverage.', 'pattern' => ''],
+            ['path' => 'routes/web.php', 'action' => 'change', 'what' => 'Its route.', 'pattern' => ''],
+        ]],
+        ['number' => 2, 'role' => 'mason', 'name' => 'Build', 'tone' => '#9d7bff', 'title' => 'The real page', 'line' => 'I build it.', 'files' => [
+            ['path' => 'app/Models/CoverageRun.php', 'action' => 'create', 'what' => 'The coverage of one run.', 'pattern' => 'app/Models/Prototype/CoverageRun.php'],
+            ['path' => 'routes/web.php', 'action' => 'change', 'what' => 'Its route.', 'pattern' => ''],
+        ]],
+        ['number' => 3, 'role' => 'prover', 'name' => 'Test', 'tone' => '#3b82ff', 'title' => 'Tests that prove it', 'line' => 'I prove it.', 'files' => [
+            ['path' => 'tests/Feature/CoverageRunTest.php', 'action' => 'create', 'what' => 'Proves the model.', 'pattern' => ''],
+        ]],
+    ];
+    $this->written['app/Models/Prototype/CoverageRun.php'] = ['content' => "<?php\n\nnamespace App\\Models\\Prototype;\n\nclass CoverageRun\n{\n}\n", 'edits' => [], 'note' => 'Sample coverage.'];
+    $this->replies['routes/web.php'] = [
+        ['content' => null, 'edits' => [['find' => "use Illuminate\\Support\\Facades\\Route;\n", 'replace' => "use Illuminate\\Support\\Facades\\Route;\n\nRoute::get('/prototype/coverage', fn () => 'sample');\n"]], 'note' => 'The prototype route.'],
+        ['content' => null, 'edits' => [['find' => "fn () => 'sample');\n", 'replace' => "fn () => 'sample');\nRoute::get('/coverage', fn () => 'Broken');\n"]], 'note' => 'The real route.'],
+        ['content' => null, 'edits' => [['find' => "fn () => 'Broken'", 'replace' => "fn () => 'coverage'"]], 'note' => 'Fixed.'],
+    ];
+
+    ($this->run)()->run(($this->ask)());
+
+    $sent = collect(($this->proposals)())->filter(fn (array $body): bool => isset($body['propose']['files']))->values();
+    $again = $sent->filter(fn (array $body): bool => ($body['propose']['failed'] ?? null) !== null)->values();
+
+    expect($sent->filter(fn (array $body): bool => in_array('app/Models/Prototype/CoverageRun.php', array_column($body['propose']['files'], 'path'), true)))->toHaveCount(1)
+        ->and($again)->toHaveCount(1)
+        ->and($again[0]['propose']['step'])->toBe(2)
+        ->and(array_column($again[0]['propose']['files'], 'path'))->toBe(['routes/web.php'])
+        ->and($again[0]['propose']['failed'])->toBe('Opening /coverage in the app failed with: ErrorException: The route is Broken (routes/web.php:6)')
+        ->and(file_get_contents($this->root.'/routes/web.php'))->toContain("Route::get('/prototype/coverage', fn () => 'sample');")->toContain("Route::get('/coverage', fn () => 'coverage');");
+});
+
+it('copies the signed-off prototype as the base of the real build, and the build changes the copy while the prototype stays as it is', function (): void {
+    $prototype = "<?php\n\nnamespace App\\Livewire\\Prototype;\n\nclass CoverageReport\n{\n    public array \$runs = ['sample'];\n}\n";
+    $this->answer = ['decision' => 'approve', 'note' => null];
+    $this->plan['copies'] = ['app/Livewire/Prototype/CoverageReport.php' => 'app/Livewire/CoverageReport.php'];
+    $this->plan['steps'] = [
+        ['number' => 1, 'role' => 'spark', 'name' => 'Prototype', 'tone' => '#ffb020', 'title' => 'The prototype', 'line' => 'I show it.', 'prototype' => true, 'files' => [
+            ['path' => 'app/Livewire/Prototype/CoverageReport.php', 'action' => 'create', 'what' => 'Sample coverage.', 'pattern' => ''],
+        ]],
+        ['number' => 2, 'role' => 'mason', 'name' => 'Build', 'tone' => '#9d7bff', 'title' => 'Real coverage', 'line' => 'I give it real data.', 'files' => [
+            ['path' => 'app/Livewire/CoverageReport.php', 'action' => 'change', 'what' => 'Reads the real runs.', 'pattern' => ''],
+        ]],
+    ];
+    $this->written['app/Livewire/Prototype/CoverageReport.php'] = ['content' => $prototype, 'edits' => [], 'note' => 'Sample coverage.'];
+    $this->written['app/Livewire/CoverageReport.php'] = ['content' => null, 'edits' => [['find' => "['sample']", 'replace' => '[]']], 'note' => 'Reads the real runs.'];
+
+    ($this->run)()->run(($this->ask)());
+
+    $sent = collect(($this->proposals)())->filter(fn (array $body): bool => ($body['propose']['step'] ?? null) === 2 && isset($body['propose']['files']))->first();
+
+    expect(($this->git)('log', '--reverse', '--format=%s', 'develop..HEAD'))->toBe("feat(studio): the prototype\nfeat(studio): the signed-off prototype as the base of the real build\nfeat(studio): real coverage")
+        ->and($sent['propose']['files'])->toBe([['path' => 'app/Livewire/CoverageReport.php', 'content' => str_replace('namespace App\\Livewire\\Prototype;', 'namespace App\\Livewire;', $prototype)]])
+        ->and(file_get_contents($this->root.'/app/Livewire/Prototype/CoverageReport.php'))->toBe($prototype)
+        ->and(file_get_contents($this->root.'/app/Livewire/CoverageReport.php'))->toContain('namespace App\\Livewire;')->toContain('public array $runs = [];');
+});
+
+it('writes nothing again when the finished page turns the developer\'s user away', function (): void {
+    file_put_contents($this->root.'/artisan', "<?php\necho json_encode(['path' => \$argv[2] ?? '', 'status' => 403, 'redirect' => null, 'error' => 'AccessDeniedHttpException: This action is unauthorized.', 'where' => null]);\n");
+    ($this->git)('add', '-A');
+    ($this->git)('commit', '--quiet', '-m', 'artisan');
+    $this->plan['built_at'] = '/coverage';
+
+    ($this->run)()->run(($this->ask)());
+
+    $said = collect(($this->sent)('SubmitScanWorkRequest'))->pluck('said')->filter()->values();
+
+    expect(collect(($this->proposals)())->pluck('propose.failed')->filter()->all())->toBe([])
+        ->and($said)->toContain('/coverage does not let your user in, so I could not see it render.');
+});
+
+it('opens nothing at the end when the plan names no page to open', function (): void {
+    file_put_contents($this->root.'/artisan', "<?php\nfile_put_contents(__DIR__.'/opened.log', (\$argv[2] ?? '').\"\\n\", FILE_APPEND);\necho json_encode(['path' => \$argv[2] ?? '', 'status' => 200]);\n");
+    ($this->git)('add', '-A');
+    ($this->git)('commit', '--quiet', '-m', 'artisan');
+
+    ($this->run)()->run(($this->ask)());
+
+    expect(file_get_contents($this->root.'/opened.log'))->not->toContain('/');
+});

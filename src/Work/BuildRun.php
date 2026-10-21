@@ -71,6 +71,11 @@ final class BuildRun
     private array $created = [];
 
     /**
+     * @var array<string, string>
+     */
+    private array $copies = [];
+
+    /**
      * @var array<string, array{content: string, note: string}>
      */
     private array $arrived = [];
@@ -122,6 +127,7 @@ final class BuildRun
 
         $this->base = $this->git->head();
         $this->read = array_values(array_filter((array) ($plan['read'] ?? []), is_string(...)));
+        $this->copies = array_filter((array) ($plan['copies'] ?? []), fn (mixed $copy, mixed $prototype): bool => is_string($copy) && is_string($prototype) && ! str_contains($copy.$prototype, '..'), ARRAY_FILTER_USE_BOTH);
         $paths = array_merge([], ...array_map(fn (array $step): array => array_column($step['files'], 'path'), $steps));
         $this->progress->begin($this->session, self::JOB, $name, 'terminal', $this->branch, $paths);
         $this->studio->submitScanWork(['session' => $this->session, 'state' => 'running', 'branch' => $this->branch, 'from' => $this->from, 'refused' => null, 'batches' => []]);
@@ -141,7 +147,7 @@ final class BuildRun
             return $this->refuse($name, 'terminal', $this->halt, true);
         }
 
-        return $this->finish($name, count($steps), $this->checkedOver());
+        return $this->finish($name, count($steps), $this->checkedOver($steps, (string) ($plan['built_at'] ?? '')));
     }
 
     /**
@@ -158,7 +164,57 @@ final class BuildRun
             $at = $this->rendered($step, $at, self::RENDER_TRIES);
         }
 
-        return ! $this->halted() && (! $step['prototype'] || $this->signedOff($step, $at));
+        return ! $this->halted() && (! $step['prototype'] || ($this->signedOff($step, $at) && $this->based()));
+    }
+
+    private function based(): bool
+    {
+        $copied = collect($this->copies)
+            ->filter(fn (string $copy, string $prototype): bool => is_file($this->root.'/'.$prototype) && ! is_file($this->root.'/'.$copy))
+            ->each(function (string $copy, string $prototype): void {
+                is_dir(dirname($this->root.'/'.$copy)) || mkdir(dirname($this->root.'/'.$copy), 0755, true);
+                file_put_contents($this->root.'/'.$copy, PrototypeCopy::of((string) file_get_contents($this->root.'/'.$prototype), $this->copies));
+            });
+
+        if ($copied->isEmpty()) {
+            return ! $this->halted();
+        }
+
+        $paths = array_values($copied->all());
+        $this->created = [...$this->created, ...$paths];
+        $this->built = array_values(array_unique([...$this->built, ...$paths]));
+        $commit = $this->git->commit(
+            'feat('.LocalBranch::commitScope().'): the signed-off prototype as the base of the real build',
+            $copied->map(fn (string $copy, string $prototype): string => '- '.$copy.', copied from '.$prototype)->implode("\n")."\n".Says::named('- Copied by {name} on this machine, so the prototype itself stays as it is'),
+            only: $paths,
+            new: $paths,
+        );
+        $this->say(sprintf('I copied the prototype you signed off to %s, the base the build gives real data%s.', implode(', ', $paths), $commit === null ? '' : ', and committed it as '.substr($commit, 0, 7)));
+
+        return ! $this->halted();
+    }
+
+    private function routed(string $builtAt): string
+    {
+        $file = $this->root.'/routes/web.php';
+
+        if ($this->copies === [] || ! is_file($file) || $this->halted()) {
+            return $builtAt;
+        }
+
+        $routed = PrototypeCopy::routed((string) file_get_contents($file), $this->copies);
+        $routed['unplaced'] === [] || $this->say(sprintf('Nothing in the build routes to %s, and I could not tell which part of your app it belongs with, so I added no route for it.', implode(', ', $routed['unplaced'])));
+        $checked = PhpCheck::of('routes/web.php', $routed['routes']);
+
+        if ($routed['added'] === [] || $checked['error'] !== null) {
+            return $builtAt;
+        }
+
+        file_put_contents($file, $checked['content']);
+        $commit = $this->git->commit('feat('.LocalBranch::commitScope().'): the route to the real page', '- routes/web.php: '.implode(', ', $routed['added']).Says::named(', which the build left out, added beside the routes it belongs with by {name}'), only: ['routes/web.php']);
+        $this->say(sprintf('The build left out the route to %s, so I added it beside the routes it belongs with%s.', implode(', ', $routed['added']), $commit === null ? '' : ' and committed it as '.substr($commit, 0, 7)));
+
+        return str_starts_with($builtAt, '/') ? $builtAt : $routed['added'][0];
     }
 
     /**
@@ -200,6 +256,52 @@ final class BuildRun
         $this->committed($step['number'], $step, array_column($step['files'], 'path'));
 
         return $this->rendered($step, $at, $tries - 1);
+    }
+
+    /**
+     * @param  list<PlannedStep>  $steps
+     */
+    private function renderedBuilt(array $steps, string $at, int $tries): void
+    {
+        if (! str_starts_with($at, '/') || $this->halted()) {
+            return;
+        }
+
+        $this->say(sprintf('I’m opening %s to check what I built renders before you try it.', $at));
+        $opened = $this->renders($at);
+        $error = $opened['error'];
+        $fixing = $error === null || $opened['missing'] || $opened['denied'] ? null : $this->stepThatWrote($steps, $error);
+
+        if ($fixing === null || $tries === 0) {
+            $this->say(match (true) {
+                $opened['missing'] => sprintf('%s is not a page in your app, so I could not open it.', $opened['path']),
+                $opened['denied'] => sprintf('%s does not let your user in, so I could not see it render.', $opened['path']),
+                $opened['redirect'] !== null => sprintf('%s sent me on to %s, so I could not see it render.', $opened['path'], $opened['redirect']),
+                $error === null => sprintf('%s renders.', $opened['path']),
+                default => sprintf('%s still does not render: %s. I’m stopping so you can see it.', $opened['path'], rtrim($error, '.')),
+            });
+
+            return;
+        }
+
+        $this->say(sprintf('%s does not render: %s. I’m fixing %s.', $opened['path'], rtrim($error, '.'), implode(', ', array_column($fixing['files'], 'path'))));
+        $this->written($fixing['number'], $fixing['files'], 'Opening '.$opened['path'].' in the app failed with: '.$error);
+        $this->committed($fixing['number'], $fixing, array_column($fixing['files'], 'path'));
+        $this->renderedBuilt($steps, $at, $tries - 1);
+    }
+
+    /**
+     * @param  list<PlannedStep>  $steps
+     * @return PlannedStep|null
+     */
+    private function stepThatWrote(array $steps, string $error): ?array
+    {
+        $built = collect($steps)->reject(fn (array $step): bool => $step['prototype'])->reverse()->values();
+        $named = $built
+            ->map(fn (array $step): array => [...$step, 'files' => array_values(array_filter($step['files'], fn (array $file): bool => str_contains($error, $file['path'])))])
+            ->first(fn (array $step): bool => $step['files'] !== []);
+
+        return $named ?? $built->first(fn (array $step): bool => $step['role'] !== self::TEST_ROLE);
     }
 
     /**
@@ -573,9 +675,10 @@ final class BuildRun
     /**
      * The one stop: everything is committed, so the developer tries the app.
      *
+     * @param  list<PlannedStep>  $steps
      * @return array{decision: string, note: ?string}|null
      */
-    private function checkedOver(): ?array
+    private function checkedOver(array $steps, string $builtAt): ?array
     {
         $committed = collect($this->batches)->where('state', 'committed');
 
@@ -583,6 +686,7 @@ final class BuildRun
             return null;
         }
 
+        $this->renderedBuilt($steps, $this->routed($builtAt), self::RENDER_TRIES);
         $this->say('Every step is committed. Checking that the files compile, your tests pass and your app boots…');
         $paths = array_values(array_unique(array_column($this->git->changesSince((string) $this->base), 'path')));
         $broken = collect($paths)
