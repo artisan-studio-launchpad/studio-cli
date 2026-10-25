@@ -46,7 +46,8 @@ final class StepChecks
     {
         $tool = $this->toolbox->tool('phpstan');
         $command = $tool?->command($this->root);
-        $php = array_values(array_filter(self::phpOf($paths), fn (string $path): bool => ! str_ends_with($path, '.blade.php') && is_file($this->root.'/'.$path)));
+        $analysed = self::analysedIn($this->root);
+        $php = array_values(array_filter(self::phpOf($paths), fn (string $path): bool => ! str_ends_with($path, '.blade.php') && is_file($this->root.'/'.$path) && ($analysed === [] || collect($analysed)->contains(fn (string $folder): bool => $path === $folder || str_starts_with($path, $folder.'/')))));
 
         if ($tool === null || $command === null) {
             return null;
@@ -70,6 +71,24 @@ final class StepChecks
             ->groupBy(fn (array $finding): string => (string) preg_replace('/:\d+$/', '', $finding['where']))
             ->map(fn (Collection $found): array => array_values($found->map(fn (array $finding): string => (preg_match('/:(\d+)$/', $finding['where'], $line) === 1 ? 'line '.$line[1].': ' : '').$finding['message'])->all()))
             ->all();
+    }
+
+    /**
+     * @return list<string>
+     */
+    public static function analysedIn(string $root): array
+    {
+        $config = collect(['phpstan.neon', 'phpstan.neon.dist', 'phpstan.dist.neon'])
+            ->map(fn (string $name): string => $root.'/'.$name)
+            ->first(fn (string $path): bool => is_file($path));
+
+        if ($config === null || preg_match('/^(\s*)paths:\s*\n((?:\1\s+-[^\n]*\n?)+)/m', (string) file_get_contents($config), $block) !== 1) {
+            return [];
+        }
+
+        preg_match_all('/-\s*[\'"]?([^\'"\n#]+?)[\'"]?\s*(?:#.*)?$/m', $block[2], $listed);
+
+        return array_values(array_map(fn (string $path): string => trim(str_replace('%currentWorkingDirectory%/', '', $path), '/ '), $listed[1]));
     }
 
     /**

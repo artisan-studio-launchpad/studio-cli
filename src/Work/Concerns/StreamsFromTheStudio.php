@@ -115,6 +115,8 @@ trait StreamsFromTheStudio
     private function waitedFor(): void
     {
         $this->heartbeat();
+        method_exists($this, 'timelineSent') && $this->timelineSent();
+        method_exists($this, 'stillWriting') && $this->stillWriting();
         sleep($this->pollSeconds);
     }
 

@@ -1,5 +1,10 @@
+@if (($assets ?? []) !== [])
+    @vite($assets)
+@endif
+
 <div
     id="studio-prototype"
+    class="{{ $theme }}"
     style="position: fixed; inset: 0; z-index: 2147483000; display: flex; align-items: center; justify-content: center; padding: 3vh 3vw; background: rgba(2, 6, 23, 0.72); backdrop-filter: blur(4px);"
 >
     <style>

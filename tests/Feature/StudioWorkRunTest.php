@@ -846,3 +846,67 @@ it('checks only the rule the developer marked as done, in that file, and changes
         ->and($sent[3]['passed'])->toBeTrue()
         ->and(($this->git)('branch', '--show-current'))->toBe('develop');
 });
+
+it('sends a branch with the history under the commit it starts from, and sends from the commit the studio says GitHub has when it says so', function (): void {
+    $start = ($this->git)('rev-parse', 'HEAD');
+    file_put_contents($this->root.'/two.txt', "two\n");
+    ($this->git)('add', '-A');
+    ($this->git)('commit', '--quiet', '-m', 'two');
+    $two = ($this->git)('rev-parse', 'HEAD');
+    ($this->git)('update-ref', 'refs/remotes/origin/develop', $two);
+    ($this->git)('checkout', '--quiet', '-b', 'studio/fixes-test');
+    file_put_contents($this->root.'/three.txt', "three\n");
+    ($this->git)('add', '-A');
+    ($this->git)('commit', '--quiet', '-m', 'three');
+    $bodies = [];
+    Saloon::fake([SubmitScanWorkRequest::class => function ($pending) use (&$bodies) {
+        $bodies[] = $pending->body()->all();
+
+        return MockResponse::make(['recorded' => true], 202);
+    }]);
+
+    ($this->run)()->sendBranches([['id' => 4, 'branch' => 'studio/fixes-test', 'base' => 'develop']]);
+    ($this->run)()->sendBranches([['id' => 4, 'branch' => 'studio/fixes-test', 'base' => 'develop', 'have' => $start]]);
+
+    $sent = collect($bodies)->filter(fn (array $body): bool => isset($body['send']['commits']))->pluck('send')->values();
+
+    expect($sent[0]['base'])->toBe($two)->and($sent[0]['ancestors'])->toBe([$two, $start])->and($sent[0]['commits'])->toHaveCount(1)
+        ->and($sent[1]['base'])->toBe($start)->and($sent[1]['commits'])->toHaveCount(2);
+});
+
+it('still sends a branch when GitHub cannot be reached, because the fetch only improves what the pull request says', function (): void {
+    ($this->git)('remote', 'add', 'origin', $this->root.'/nowhere.git');
+    ($this->git)('checkout', '--quiet', '-b', 'studio/fixes-test');
+    file_put_contents($this->root.'/three.txt', "three\n");
+    ($this->git)('add', '-A');
+    ($this->git)('commit', '--quiet', '-m', 'three');
+    $bodies = [];
+    Saloon::fake([SubmitScanWorkRequest::class => function ($pending) use (&$bodies) {
+        $bodies[] = $pending->body()->all();
+
+        return MockResponse::make(['recorded' => true], 202);
+    }]);
+
+    $said = ($this->run)()->sendBranches([['id' => 4, 'branch' => 'studio/fixes-test', 'base' => 'develop']]);
+
+    expect(collect($bodies)->filter(fn (array $body): bool => isset($body['send']['commits']))->count())->toBe(1)
+        ->and($said)->toContain('Sent studio/fixes-test');
+});
+
+it('tells the studio why a branch could not be sent when the send stops on this machine, so the pull request never just spins', function (): void {
+    $bodies = [];
+    Saloon::fake([SubmitScanWorkRequest::class => function ($pending) use (&$bodies) {
+        $bodies[] = $pending->body()->all();
+
+        return MockResponse::make(['recorded' => true], 202);
+    }]);
+    $run = ($this->run)();
+    rename($this->root, $this->root.'-away');
+
+    $said = $run->sendBranches([['id' => 4, 'branch' => 'studio/fixes-test', 'base' => 'develop']]);
+    rename($this->root.'-away', $this->root);
+
+    expect($bodies[0]['send'])->toMatchArray(['id' => 4])
+        ->and($bodies[0]['send']['failed'])->toContain('it stopped on this machine')
+        ->and($said)->toContain('could not be sent');
+});

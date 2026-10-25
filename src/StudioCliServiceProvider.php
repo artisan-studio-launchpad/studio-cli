@@ -12,6 +12,7 @@ use ArtisanStudio\StudioCli\Console\CheckCommand;
 use ArtisanStudio\StudioCli\Console\ConventionsCommand;
 use ArtisanStudio\StudioCli\Console\DashboardCommand;
 use ArtisanStudio\StudioCli\Console\FixCommand;
+use ArtisanStudio\StudioCli\Console\HistoryCommand;
 use ArtisanStudio\StudioCli\Console\InsightsCommand;
 use ArtisanStudio\StudioCli\Console\InstallToolsCommand;
 use ArtisanStudio\StudioCli\Console\PhpStanCommand;
@@ -28,7 +29,9 @@ use ArtisanStudio\StudioCli\Dashboard\SnapshotSource;
 use ArtisanStudio\StudioCli\Events\StudioReported;
 use ArtisanStudio\StudioCli\Fix\FixLauncher;
 use ArtisanStudio\StudioCli\Fix\FixProgress;
+use ArtisanStudio\StudioCli\History\FeatureCommits;
 use ArtisanStudio\StudioCli\Prototype\PrototypeController;
+use ArtisanStudio\StudioCli\Prototype\PrototypeShot;
 use ArtisanStudio\StudioCli\Prototype\ShowsPrototype;
 use ArtisanStudio\StudioCli\Scan\ScanProgress;
 use ArtisanStudio\StudioCli\Scan\ToolStatus;
@@ -76,7 +79,10 @@ class StudioCliServiceProvider extends ServiceProvider
             $this->app->path(),
             $this->app->getNamespace(),
             $this->app->make(ModelInspector::class),
+            Blueprint::rootsOf($this->app->basePath()),
         ));
+
+        $this->app->singleton(FeatureCommits::class, fn (): FeatureCommits => new FeatureCommits($this->app->basePath()));
 
         $this->app->singleton(Walk::class, fn (): Walk => new Walk($this->app->basePath(), $this->app->make(LocalChanges::class)));
 
@@ -110,6 +116,10 @@ class StudioCliServiceProvider extends ServiceProvider
 
         $this->app->bind('studio-cli.prototype.mount', fn (): Closure => fn (string $component): string => (string) app('livewire')->mount($component));
 
+        $this->app->bind('studio-cli.prototype.shot', fn (): Closure => fn (string $url, int $width, int $height): ?string => (new PrototypeShot)->take($url, $width, $height));
+
+        $this->app->bind('studio-cli.prototype.audit', fn (): Closure => fn (string $url, int $width, int $height): ?array => (new PrototypeShot)->audit($url, $width, $height));
+
         $this->app->bind('studio-cli.prototype.page', fn (): Closure => fn (string $component): mixed => app()->call(app('livewire')->new($component)->__invoke(...)));
     }
 
@@ -128,6 +138,7 @@ class StudioCliServiceProvider extends ServiceProvider
             BuildPresenceCommand::class,
             ConventionsCommand::class,
             DashboardCommand::class,
+            HistoryCommand::class,
             FixCommand::class,
             InsightsCommand::class,
             InstallToolsCommand::class,
@@ -151,6 +162,8 @@ class StudioCliServiceProvider extends ServiceProvider
 
         Event::listen(StudioReported::class, $this->mapTheBlueprintWhenAsked(...));
 
+        Event::listen(StudioReported::class, $this->readTheHistoryWhenAsked(...));
+
         Event::listen(StudioReported::class, $this->runTheToolsWhenAsked(...));
 
         Event::listen(StudioReported::class, $this->stopTheScanWhenReset(...));
@@ -165,6 +178,15 @@ class StudioCliServiceProvider extends ServiceProvider
         }
     }
 
+    private function readTheHistoryWhenAsked(StudioReported $reported): void
+    {
+        if (($reported->event['type'] ?? null) !== 'history') {
+            return;
+        }
+
+        $this->app->make(BackgroundTasks::class)->start('history', 'History', 'Reading what you have built…', [HistoryCommand::SIGNATURE]);
+    }
+
     private function mapTheBlueprintWhenAsked(StudioReported $reported): void
     {
         if (($reported->event['type'] ?? null) !== 'blueprint') {
@@ -177,7 +199,7 @@ class StudioCliServiceProvider extends ServiceProvider
         $tasks->stop(self::SCAN_TASKS);
         $tasks->start('blueprint', 'Blueprint', 'Mapping your models…', [BlueprintCommand::SIGNATURE]);
         $tasks->start('conventions', 'Conventions', 'Counting how your project is written…', [ConventionsCommand::SIGNATURE]);
-        $tasks->start('tests', 'Your tests', 'Checking whether you switched your tests on…', [TestsCommand::SIGNATURE], timeout: TestsCommand::TIMEOUT);
+        $tasks->start('tests', 'Your tests', 'Checking whether you switched your tests on…', [TestsCommand::SIGNATURE], timeout: TestsCommand::timeout());
         $tasks->start('tools', 'Scan tools', 'Running your project’s own checking tools, read-only…', [ToolsCommand::SIGNATURE]);
     }
 
@@ -299,7 +321,7 @@ class StudioCliServiceProvider extends ServiceProvider
         $tasks = $this->app->make(BackgroundTasks::class);
 
         if (in_array(TestsCommand::COVERAGE, $tools, true)) {
-            $tasks->start(TestsCommand::COVERAGE_TASK, 'Code coverage', 'Measuring code coverage in the background…', [TestsCommand::SIGNATURE], timeout: TestsCommand::TIMEOUT);
+            $tasks->start(TestsCommand::COVERAGE_TASK, 'Code coverage', 'Measuring code coverage in the background…', [TestsCommand::SIGNATURE], timeout: TestsCommand::timeout());
         }
 
         if ($status->missing() !== []) {
@@ -315,7 +337,8 @@ class StudioCliServiceProvider extends ServiceProvider
             return;
         }
 
-        $this->app->make(Router::class)->middleware('web')->get('prototype/{build}', PrototypeController::class)->whereUuid('build')->name('studio-cli.prototype');
+        $this->app->make(Router::class)->middleware('web')->get('prototype/{build}', PrototypeController::class)->whereUuid('build')->defaults('stage', 'prototype')->name('studio-cli.prototype');
+        $this->app->make(Router::class)->middleware('web')->get('wireframe/{build}', PrototypeController::class)->whereUuid('build')->defaults('stage', 'wireframe')->name('studio-cli.wireframe');
         $this->callAfterResolving(HttpKernel::class, fn (Kernel $kernel): Kernel => $kernel->appendMiddlewareToGroup('web', ShowsPrototype::class));
     }
 

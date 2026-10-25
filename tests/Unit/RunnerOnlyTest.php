@@ -23,8 +23,8 @@ dataset('runner folders', [
     'scan tools' => ['src/Scan/Tools', ['ComposerAudit', 'DefinedTool', 'NodeAudit', 'PestArch', 'PhpStan', 'Pint', 'Rector', 'TestSuite', 'Tests', 'Tool', 'Toolbox', 'TypeCoverage'], []],
     'fix' => ['src/Fix', ['AutomatedFixes', 'FixLauncher', 'FixPanel', 'FixProgress', 'LocalBranch', 'RectorRules', 'StudioFixes'], []],
     'fix security' => ['src/Fix/Security', ['TargetedSecurityUpdates'], []],
-    'work' => ['src/Work', ['BuildRun', 'EditApplier', 'PhpCheck', 'PrototypeCopy', 'StepChecks', 'TestRunner', 'WorkLauncher', 'WorkPanel', 'WorkProgress', 'WorkRun'], []],
-    'work concerns' => ['src/Work/Concerns', ['AsksTheDeveloper', 'ChecksTheMachine', 'ReportsToTheStudio', 'StreamsFromTheStudio'], []],
+    'work' => ['src/Work', ['BuildRun', 'EditApplier', 'PhpCheck', 'PrototypeCopy', 'StepChecks', 'TestRunner', 'Timeline', 'WorkLauncher', 'WorkPanel', 'WorkProgress', 'WorkRun'], []],
+    'work concerns' => ['src/Work/Concerns', ['AsksTheDeveloper', 'ChecksTheMachine', 'ReportsToTheStudio', 'StreamsFromTheStudio', 'TimesTheWork'], []],
 ]);
 
 it('keeps only the files a runner needs in each folder', function (string $folder, array $allowed, array $exceptions): void {

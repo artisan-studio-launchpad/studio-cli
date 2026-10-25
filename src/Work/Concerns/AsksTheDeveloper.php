@@ -39,7 +39,7 @@ trait AsksTheDeveloper
         $this->progress->stopped($question);
         $this->studio->submitScanWork(['session' => $this->session, 'state' => 'stopped', 'batches' => $this->batchesForTheStudio(), 'question' => [...$question, 'reason' => (string) $this->fitting($reason)]]);
 
-        $answer = $this->waited();
+        $answer = $this->timed('developer', 'waiting for you: '.mb_substr($reason, 0, 120), fn (): array => $this->waited(), $number > 0 ? $number : null, null, fn (array $answered): string => 'you said '.$answered['decision']);
         $this->waited[$number] = ($this->waited[$number] ?? 0.0) + microtime(true) - $since;
         $this->progress->resumed();
         $this->pulse('fixing');

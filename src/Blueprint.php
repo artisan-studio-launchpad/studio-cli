@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ArtisanStudio\StudioCli;
 
+use Composer\Autoload\ClassLoader;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\ModelInspector;
 use Illuminate\Support\Collection;
@@ -17,11 +18,47 @@ class Blueprint
 {
     private const string CAST = '/^[A-Za-z0-9_\\\\:,.-]{1,255}$/';
 
+    private const array NOT_THEIR_CODE = ['vendor', 'node_modules', 'tests', 'database', 'storage'];
+
+    /**
+     * @param  array<string, list<string>>  $roots  namespace prefix => directories, beside the one app path
+     */
     public function __construct(
         private readonly string $appPath,
         private readonly string $namespace,
         private readonly ModelInspector $inspector,
+        private readonly array $roots = [],
     ) {}
+
+    /**
+     * Every PSR-4 root the project itself declares, wherever it lives: the app,
+     * and the modules, packages and domains a larger project splits into.
+     *
+     * @return array<string, list<string>>
+     */
+    public static function rootsOf(string $basePath): array
+    {
+        $base = realpath($basePath);
+
+        if ($base === false) {
+            return [];
+        }
+
+        return collect(ClassLoader::getRegisteredLoaders())
+            ->flatMap(fn (ClassLoader $loader): array => $loader->getPrefixesPsr4())
+            ->map(fn (array $directories): array => collect($directories)
+                ->map(fn (string $directory): string|false => realpath($directory))
+                ->filter(fn (string|false $directory): bool => $directory !== false && str_starts_with($directory, $base.DIRECTORY_SEPARATOR) && ! self::isNotTheirCode(substr($directory, strlen($base) + 1)))
+                ->values()
+                ->all())
+            ->filter()
+            ->all();
+    }
+
+    private static function isNotTheirCode(string $relative): bool
+    {
+        return collect(explode(DIRECTORY_SEPARATOR, $relative))->intersect(self::NOT_THEIR_CODE)->isNotEmpty();
+    }
 
     /**
      * @return array{models: array<int, array{class: string, table: string, columns: array<int, array{name: string, database_type: string, enum: bool, nullable: bool, cast: ?string, fillable: bool, hidden: bool, unique: bool}>, relationships: array<int, array{name: string, type: string, related: string}>, observers: array<int, array{event: string, observer: string}>}>, skipped: array<int, string>}
@@ -41,12 +78,14 @@ class Blueprint
      */
     public function models(): Collection
     {
-        if (! is_dir($this->appPath)) {
-            return collect();
-        }
-
-        return collect(Finder::create()->in($this->appPath)->files()->name('*.php')->contains('/\bextends\b/'))
-            ->map(fn (SplFileInfo $file): string => $this->namespace.str_replace(['/', '\\'], '\\', Str::beforeLast($file->getRelativePathname(), '.php')))
+        return collect([$this->namespace => [$this->appPath], ...$this->roots])
+            ->flatMap(fn (array $directories, string $namespace): array => collect($directories)
+                ->filter(fn (string $directory): bool => is_dir($directory))
+                ->flatMap(fn (string $directory): array => collect(Finder::create()->in($directory)->files()->name('*.php')->contains('/\bextends\b/'))
+                    ->map(fn (SplFileInfo $file): string => $namespace.str_replace(['/', '\\'], '\\', Str::beforeLast($file->getRelativePathname(), '.php')))
+                    ->all())
+                ->all())
+            ->unique()
             ->filter(fn (string $class): bool => $this->isAModel($class))
             ->sort()
             ->values();

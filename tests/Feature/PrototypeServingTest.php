@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use ArtisanStudio\StudioCli\Prototype\Prototypes;
 use ArtisanStudio\StudioCli\Says;
+use ArtisanStudio\StudioCli\Studio;
 use Illuminate\Support\Facades\Route;
 
 beforeEach(function (): void {
@@ -44,6 +45,28 @@ it('opens the prototype in a modal over whatever page of the app it is asked on,
     expect($this->get('/dashboard?prototype='.$this->build)->headers->get('Location'))->toEndWith('/login?prototype='.$this->build);
 });
 
+it('gives the full page and the modal the class the app\'s own layout puts on its html tag, even when it is set in a layout that layout uses', function (): void {
+    $folder = sys_get_temp_dir().'/prototype-theme-'.bin2hex(random_bytes(4));
+    mkdir($folder.'/components/layouts/app', 0755, true);
+    file_put_contents($folder.'/components/layouts/app.blade.php', "<x-layouts.app.sidebar>\n{{ \$slot }}\n</x-layouts.app.sidebar>\n");
+    file_put_contents($folder.'/components/layouts/app/sidebar.blade.php', "<!DOCTYPE html>\n<html\n    lang=\"en\"\n    class=\"dark\"\n>\n<head></head><body></body></html>\n");
+    app('view')->addLocation($folder);
+    config(['livewire.component_layout' => 'components.layouts.app']);
+
+    $this->get('/prototype/'.$this->build.'?full-page')->assertSee("lang=\"en\"\n    class=\"dark\"", false);
+    $this->get('/?prototype='.$this->build)->assertSee('id="studio-prototype"', false)->assertSee('class="dark"', false);
+
+    expect(Prototypes::theme())->toBe('dark');
+});
+
+it('finishes every animation on a page asked for in still mode, so a screenshot shows the finished page, and leaves other pages alone', function (): void {
+    $still = $this->get('/?prototype='.$this->build.'&studio-still=1')->assertOk();
+
+    $still->assertSee('animation-duration:1ms', false)->assertSee('window.requestAnimationFrame', false);
+    $this->get('/?prototype='.$this->build)->assertDontSee('animation-duration:1ms', false);
+    $this->get('/prototype/'.$this->build.'?full-page')->assertDontSee('animation-duration:1ms', false);
+});
+
 it('serves nothing for a build it does not know, or once serving is switched off', function (): void {
     $this->get('/prototype/0198a2b0-0000-7000-8000-000000000000')->assertNotFound();
     $this->get('/?prototype=0198a2b0-0000-7000-8000-000000000000')->assertDontSee('studio-prototype');
@@ -60,4 +83,19 @@ it('never serves a prototype in production, even when told to', function (): voi
     expect(Prototypes::served())->toBeFalse();
     $this->get('/prototype/'.$this->build)->assertNotFound();
     $this->get('/?prototype='.$this->build)->assertDontSee('studio-prototype');
+});
+
+it('serves the wireframe and the prototype of a build at their own addresses, each its own component', function (): void {
+    Prototypes::at(base_path())->remember($this->build, Studio::class, Prototypes::PROTOTYPE);
+
+    $this->get('/wireframe/'.$this->build.'?full-page')->assertOk()->assertSee('data-prototype="'.Says::class.'"', false);
+    $this->get('/prototype/'.$this->build.'?full-page')->assertOk()->assertSee('data-prototype="'.Studio::class.'"', false);
+    $this->get('/?wireframe='.$this->build)->assertOk()->assertSee('data-prototype="'.Says::class.'"', false);
+    $this->get('/?prototype='.$this->build)->assertOk()->assertSee('data-prototype="'.Studio::class.'"', false);
+});
+
+it('shows a build that has only a wireframe at its prototype address too, and finds no prototype for a build it does not know', function (): void {
+    $this->get('/prototype/'.$this->build.'?full-page')->assertOk()->assertSee('data-prototype="'.Says::class.'"', false);
+    $this->get('/wireframe/01a15b59-0000-70ad-8c19-b13a3c0393a5')->assertNotFound();
+    $this->get('/prototype/01a15b59-0000-70ad-8c19-b13a3c0393a5')->assertNotFound();
 });

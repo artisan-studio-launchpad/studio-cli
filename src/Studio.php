@@ -22,6 +22,7 @@ use ArtisanStudio\StudioCli\Saloon\Requests\ShowSnapshotRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\ShowSpeechRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\SubmitBlueprintRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\SubmitConventionFactsRequest;
+use ArtisanStudio\StudioCli\Saloon\Requests\SubmitRepoHistoryRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\SubmitScanFixReportRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\SubmitScanFlagsRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\SubmitScanToolResultsRequest;
@@ -135,6 +136,15 @@ class Studio
     public function submitBlueprint(array $blueprint): ?array
     {
         return $this->fetch(new SubmitBlueprintRequest($this->project(), $blueprint));
+    }
+
+    /**
+     * @param  array{commit: ?string, total: int, conventional: bool, commits: list<array<string, mixed>>}  $history
+     * @return array<mixed>|null
+     */
+    public function submitRepoHistory(array $history): ?array
+    {
+        return $this->fetch(new SubmitRepoHistoryRequest($this->project(), $history));
     }
 
     /**
@@ -279,6 +289,26 @@ class Studio
     public function submitScanWork(array $report): ?array
     {
         return $this->quietly(new SubmitScanWorkRequest($this->project(), $report));
+    }
+
+    /**
+     * SAMI's look at screenshots of the prototype, which she answers while
+     * the terminal waits.
+     *
+     * @param  list<array{view: string, image: string, size: string}>  $shots
+     * @return array{looks_finished: bool, problems: list<string>}|null
+     */
+    public function reviewPrototype(int $session, array $shots): ?array
+    {
+        $request = new SubmitScanWorkRequest($this->project(), ['session' => $session, 'review' => ['shots' => $shots]]);
+        $request->config()->merge(['timeout' => 180, 'connect_timeout' => 10]);
+        $answer = $this->quietly($request);
+        $review = $answer['review'] ?? null;
+
+        return is_array($review) ? [
+            'looks_finished' => (bool) ($review['looks_finished'] ?? true),
+            'problems' => array_values(array_filter((array) ($review['problems'] ?? []), is_string(...))),
+        ] : null;
     }
 
     /**

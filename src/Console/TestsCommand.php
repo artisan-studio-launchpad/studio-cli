@@ -22,7 +22,10 @@ class TestsCommand extends Command
 
     public const string COVERAGE_TASK = 'coverage';
 
-    public const int TIMEOUT = 1900;
+    public static function timeout(): int
+    {
+        return (new Tests)->timeout() + 100;
+    }
 
     protected $signature = self::SIGNATURE.'
         {--json : Print what would be sent, and send nothing}

@@ -61,6 +61,7 @@ return [
 
     'review' => [
         'editor' => env('ARTISAN_STUDIO_EDITOR'),
+        'keep_front' => (bool) env('ARTISAN_STUDIO_EDITOR_KEEPS_FRONT', true),
     ],
 
     /*
@@ -76,6 +77,25 @@ return [
 
     'prototypes' => [
         'serve' => env('STUDIO_CLI_SERVE_PROTOTYPES'),
+        'browser' => env('STUDIO_CLI_BROWSER'),
+        'review' => (bool) env('STUDIO_CLI_REVIEW_PROTOTYPES', false),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Your tests
+    |--------------------------------------------------------------------------
+    |
+    | The scan runs your test suite once, in the background, and sends only the
+    | counts and the failing tests' names. `timeout_minutes` is the longest it
+    | is given: after that the run is stopped and the scan says your suite is
+    | too slow, so it never holds up the other checks. We recommend five. A
+    | suite that needs longer is worth speeding up, not waiting for.
+    |
+    */
+
+    'tests' => [
+        'timeout_minutes' => (int) env('ARTISAN_STUDIO_TESTS_TIMEOUT_MINUTES', 5),
     ],
 
     /*

@@ -20,6 +20,7 @@ use Closure;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
+use Throwable;
 
 /**
  * @phpstan-type Attempt array{ok: bool, reason: string, commit: ?string, fixed: int, left: int, patch: string, verdict: ?array<string, mixed>, paths: list<string>, aside: list<string>}
@@ -79,6 +80,8 @@ final class WorkRun
     public const string APPROVE = 'approve';
 
     public const string LEAVE = 'leave';
+
+    public const string SKIP = 'skip';
 
     /**
      * @var array<string, string>
@@ -344,8 +347,7 @@ final class WorkRun
     public function sendBranches(array $sends): string
     {
         $sent = array_map(function (array $send): bool {
-            $outgoing = $this->git->outgoing((string) $send['branch'], (string) $send['base']);
-            $refused = is_string($outgoing) ? $outgoing : $this->sendCommits((int) $send['id'], $outgoing);
+            $refused = $this->readyToSend($send);
 
             $refused === null || $this->studio->submitScanWork(['send' => ['id' => (int) $send['id'], 'failed' => mb_substr($refused, 0, 600)]]);
             $this->step($refused === null ? 'Sent '.$send['branch'].Says::named(' to the studio, so {name} can put it on GitHub and open your PR.') : 'I could not send '.$send['branch'].': '.$refused);
@@ -355,6 +357,27 @@ final class WorkRun
         }, $sends);
 
         return count(array_filter($sent)) === count($sent) ? 'Sent '.implode(', ', array_column($sends, 'branch')).Says::named(' to the studio. {name} puts it on GitHub and opens the PR.') : Says::named('A fix branch could not be sent. {name} says why in the studio.');
+    }
+
+    /**
+     * Sends one branch and returns why it could not, so the studio says so and
+     * the developer is never left waiting on a pull request that stopped here.
+     *
+     * @param  array{id: int, branch: string, base: string, have?: string|null}  $send
+     */
+    private function readyToSend(array $send): ?string
+    {
+        try {
+            $this->git->fetched((string) $send['base']);
+            $unpushed = $this->git->unpushed((string) $send['base']);
+            $outgoing = $this->git->outgoing((string) $send['branch'], (string) $send['base'], is_string($send['have'] ?? null) ? $send['have'] : null);
+            $refused = is_string($outgoing) ? $outgoing : $this->sendCommits((int) $send['id'], $outgoing);
+            $unpushed === 0 || $refused !== null || $this->step(sprintf('Your %s has %d %s that GitHub does not have yet. %s in this pull request, before mine.', $send['base'], $unpushed, $unpushed === 1 ? 'commit' : 'commits', $unpushed === 1 ? 'It is' : 'They are'));
+
+            return $refused;
+        } catch (Throwable $error) {
+            return 'it stopped on this machine: '.$error->getMessage();
+        }
     }
 
     /**
@@ -382,7 +405,7 @@ final class WorkRun
     {
         $parts = $this->partsOf($outgoing['commits']);
         $last = count($parts) - 1;
-        $dropped = collect($parts)->search(fn (array $commits, int $part): bool => $this->studio->submitScanWork(['send' => ['id' => $id, 'base' => $outgoing['base'], 'part' => $part, 'more' => $part < $last, 'commits' => $commits]]) === null);
+        $dropped = collect($parts)->search(fn (array $commits, int $part): bool => $this->studio->submitScanWork(['send' => ['id' => $id, 'base' => $outgoing['base'], 'part' => $part, 'more' => $part < $last, 'commits' => $commits, ...($part === 0 ? ['ancestors' => $this->git->ancestors($outgoing['base'])] : [])]]) === null);
 
         return $dropped === false ? null : sprintf('the studio did not take part %d of %d of it.', $dropped + 1, count($parts));
     }

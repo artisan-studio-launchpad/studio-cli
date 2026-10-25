@@ -378,6 +378,15 @@ it('titles the table with how many grouped issues Insights lists, the same numbe
     expect(($this->insights)())->toContain('5,036 grouped issues attempting to autofix')->toContain('0/2,445 issues')->not->toContain('Attempting to fix grouped issues');
 });
 
+it('shows the tests row as did not run, never all clear, when the suite was stopped for being too slow', function (): void {
+    $this->status->testsFinished(['ran' => false, 'reason' => 'Took longer than 5 minutes, so it was stopped.']);
+
+    $screen = ($this->insights)();
+    $row = collect(explode("\n", $screen))->first(fn (string $line): bool => str_contains($line, 'Your tests'));
+
+    expect($row)->toContain('did not run')->not->toContain('all clear')->not->toContain('0 left');
+});
+
 it('shows the tests row as all clear, with how many ran, once none are failing', function (): void {
     $this->status->testsFinished(['ran' => true, 'took' => 117000, 'summary' => ['tests' => 3587, 'failed' => 0, 'skipped' => 3]]);
     $this->status->ran('tests', ['ran' => true, 'took' => 117000, 'findings' => []]);

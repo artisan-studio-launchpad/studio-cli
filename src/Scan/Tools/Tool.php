@@ -77,6 +77,11 @@ abstract class Tool
         return 600;
     }
 
+    public function tooSlow(): string
+    {
+        return 'Took longer than '.intdiv($this->timeout(), 60).' minutes, so it was stopped.';
+    }
+
     /**
      * @return array<string, string>
      */

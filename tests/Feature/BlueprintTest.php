@@ -17,6 +17,7 @@ use ArtisanStudio\StudioCli\Tests\Fixtures\Blueprint\Models\Broken;
 use ArtisanStudio\StudioCli\Tests\Fixtures\Blueprint\Models\Customer;
 use ArtisanStudio\StudioCli\Tests\Fixtures\Blueprint\Models\Invoice;
 use ArtisanStudio\StudioCli\Tests\Fixtures\Blueprint\Models\InvoiceStatus;
+use ArtisanStudio\StudioCli\Tests\Fixtures\BlueprintModules\Shop\Order;
 use ArtisanStudio\StudioCli\Work\WorkLauncher;
 use ArtisanStudio\StudioCli\Work\WorkProgress;
 use Illuminate\Database\Eloquent\ModelInspector;
@@ -48,6 +49,28 @@ beforeEach(function (): void {
 
 it('finds the models, and only the models', function (): void {
     expect($this->blueprint->models()->all())->toBe([Broken::class, Customer::class, Invoice::class]);
+});
+
+it('finds the models of a project that splits itself into modules, wherever its PSR-4 roots point', function (): void {
+    $modules = new Blueprint(
+        dirname(__DIR__).'/Fixtures/Blueprint',
+        'ArtisanStudio\\StudioCli\\Tests\\Fixtures\\Blueprint\\',
+        app(ModelInspector::class),
+        ['ArtisanStudio\\StudioCli\\Tests\\Fixtures\\BlueprintModules\\' => [dirname(__DIR__).'/Fixtures/BlueprintModules']],
+    );
+
+    expect($modules->models()->all())->toBe([Order::class, Broken::class, Customer::class, Invoice::class]);
+});
+
+it('takes the PSR-4 roots inside the project, and leaves out vendor code, tests, migrations and anything outside it', function (): void {
+    $roots = Blueprint::rootsOf(dirname(__DIR__, 2));
+    $directories = collect($roots)->flatten();
+
+    expect($directories)->not->toBeEmpty()
+        ->and($directories->every(fn (string $directory): bool => str_starts_with($directory, realpath(dirname(__DIR__, 2)).DIRECTORY_SEPARATOR)))->toBeTrue()
+        ->and($directories->contains(fn (string $directory): bool => str_contains($directory, DIRECTORY_SEPARATOR.'vendor'.DIRECTORY_SEPARATOR) || str_ends_with($directory, DIRECTORY_SEPARATOR.'tests')))->toBeFalse()
+        ->and($roots)->toHaveKey('ArtisanStudio\\StudioCli\\')
+        ->and(Blueprint::rootsOf('/no/such/folder'))->toBe([]);
 });
 
 it('maps names, the database\'s own column types, enum casts and relationships, and leaves out a model it cannot read', function (): void {

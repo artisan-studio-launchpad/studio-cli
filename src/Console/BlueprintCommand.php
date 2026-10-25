@@ -28,7 +28,7 @@ class BlueprintCommand extends Command
             return $this->outcome('This project is not linked yet. Run php artisan studio:settings, then try again.', self::SUCCESS);
         }
 
-        $this->step($journal, 'Looking for your models under app/.');
+        $this->step($journal, 'Looking for your models in your app and your modules.');
         $mapped = $blueprint->map();
         $this->step($journal, 'Read the structure of '.trans_choice(':count model|:count models', count($mapped['models'])).' with Laravel\'s model inspector: tables, columns, types and relationships. No rows.');
         $sha = $changes->currentSha();
@@ -49,7 +49,7 @@ class BlueprintCommand extends Command
         }
 
         if ($mapped['models'] === []) {
-            return $this->outcome('No models were found under app/, so there is nothing to send.', self::FAILURE);
+            return $this->outcome('No models were found in your app or your modules, so there is nothing to send.', self::FAILURE);
         }
 
         $this->step($journal, 'Sending the map to the studio: '.number_format(strlen((string) json_encode($payload)) / 1024).' KB of names, tables, column types and relationships.');

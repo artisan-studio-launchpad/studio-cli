@@ -56,9 +56,16 @@ class Tests extends Tool
         return 'Your tests';
     }
 
+    public const int RECOMMENDED_MINUTES = 5;
+
     public function timeout(): int
     {
-        return 1800;
+        return max(1, (int) config('studio-cli.tests.timeout_minutes', self::RECOMMENDED_MINUTES)) * 60;
+    }
+
+    public function tooSlow(): string
+    {
+        return 'Took longer than '.intdiv($this->timeout(), 60).' minutes, so it was stopped. A suite this slow holds up every scan and needs fixing.';
     }
 
     public function missing(): string

@@ -296,7 +296,7 @@ final class Toolbox
         try {
             $process->run();
         } catch (ProcessTimedOutException) {
-            return ['ran' => false, 'reason' => 'Took longer than '.intdiv($tool->timeout(), 60).' minutes, so it was stopped.'];
+            return ['ran' => false, 'reason' => $tool->tooSlow()];
         } catch (Throwable $exception) {
             return ['ran' => false, 'reason' => 'Could not start: '.class_basename($exception).'.'];
         }
@@ -370,7 +370,7 @@ final class Toolbox
         try {
             isset($run['process']) && $run['process']->wait();
         } catch (ProcessTimedOutException) {
-            return ['ran' => false, 'reason' => 'Took longer than '.intdiv($tool->timeout(), 60).' minutes, so it was stopped.'];
+            return ['ran' => false, 'reason' => $tool->tooSlow()];
         } catch (Throwable $exception) {
             return ['ran' => false, 'reason' => 'Could not finish: '.class_basename($exception).'.'];
         }

@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use ArtisanStudio\StudioCli\Console\TestsCommand;
 use ArtisanStudio\StudioCli\Scan\Load;
 use ArtisanStudio\StudioCli\Scan\Tools\ComposerAudit;
 use ArtisanStudio\StudioCli\Scan\Tools\DefinedTool;
@@ -427,4 +428,21 @@ it('sends the packages in composer.lock as names and versions only', function ()
     ]));
 
     expect((new Toolbox($this->root))->packages())->toBe(['laravel/framework' => 'v12.30.0', 'laravel/pint' => 'v1.24.0']);
+});
+
+it('stops a slow test suite after five minutes unless the published config says otherwise, and says it needs fixing, where any other tool just says it took too long', function (): void {
+    $tests = new Tests;
+
+    expect($tests->timeout())->toBe(300)
+        ->and($tests->tooSlow())->toBe('Took longer than 5 minutes, so it was stopped. A suite this slow holds up every scan and needs fixing.')
+        ->and((new Pint)->tooSlow())->toBe('Took longer than 10 minutes, so it was stopped.');
+
+    config(['studio-cli.tests.timeout_minutes' => 12]);
+
+    expect($tests->timeout())->toBe(720)
+        ->and(TestsCommand::timeout())->toBe(820);
+
+    config(['studio-cli.tests.timeout_minutes' => 0]);
+
+    expect($tests->timeout())->toBe(60);
 });

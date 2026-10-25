@@ -7,6 +7,7 @@ namespace ArtisanStudio\StudioCli\Fix;
 use DateTimeImmutable;
 use DateTimeZone;
 use RuntimeException;
+use Symfony\Component\Process\Exception\ProcessTimedOutException;
 use Symfony\Component\Process\Process;
 
 /**
@@ -27,6 +28,8 @@ final class LocalBranch
      * @var list<string>
      */
     public const array LOCK_FILES = ['composer.lock', 'pnpm-lock.yaml', 'package-lock.json', 'yarn.lock'];
+
+    private const int QUICK_SECONDS = 15;
 
     private const int LARGEST_PATCH = 100_000;
 
@@ -376,6 +379,25 @@ final class LocalBranch
     }
 
     /**
+     * Brings what GitHub has of the base branch up to date. It never asks the
+     * developer for a password or a key, and gives up after a few seconds: it
+     * only improves what the pull request says, so a machine that cannot reach
+     * GitHub still sends its branch.
+     */
+    public function fetched(string $into): void
+    {
+        $this->git(['remote', 'get-url', 'origin']) === null || $this->withoutAsking(['fetch', '--quiet', 'origin', $into]);
+    }
+
+    public function unpushed(string $into): int
+    {
+        $remote = $this->git(['rev-parse', '--verify', '--quiet', 'refs/remotes/origin/'.$into]);
+        $local = $this->git(['rev-parse', '--verify', '--quiet', 'refs/heads/'.$into]);
+
+        return $remote === null || $local === null ? 0 : (int) $this->git(['rev-list', '--count', $remote.'..'.$local]);
+    }
+
+    /**
      * The commits on a fix branch that the branch it came from does not have,
      * exactly as git holds them, for the studio to put on GitHub: the commit
      * both share, then each commit with its author, committer, message and
@@ -384,10 +406,11 @@ final class LocalBranch
      *
      * @return array{base: string, commits: list<array{sha: string, message: string, author: array{name: string, email: string, date: string}, committer: array{name: string, email: string, date: string}, signature: string|null, files: list<array{path: string, mode: string, content: string|null}>}>}|string
      */
-    public function outgoing(string $branch, string $into): array|string
+    public function outgoing(string $branch, string $into, ?string $have = null): array|string
     {
         $head = self::isStudioBranch($branch) ? $this->git(['rev-parse', '--verify', '--quiet', 'refs/heads/'.$branch]) : null;
-        $from = $this->git(['rev-parse', '--verify', '--quiet', 'refs/heads/'.$into]) ?? $this->git(['rev-parse', '--verify', '--quiet', 'refs/remotes/origin/'.$into]);
+        $known = $have === null ? null : $this->git(['rev-parse', '--verify', '--quiet', $have.'^{commit}']);
+        $from = $known ?? $this->git(['rev-parse', '--verify', '--quiet', 'refs/remotes/origin/'.$into]) ?? $this->git(['rev-parse', '--verify', '--quiet', 'refs/heads/'.$into]);
         $base = $head === null || $from === null ? null : $this->git(['merge-base', $from, $head]);
         $shas = $base === null ? '' : (string) $this->git(['rev-list', '--reverse', $base.'..'.$head]);
 
@@ -414,6 +437,17 @@ final class LocalBranch
         })->filter()->first();
 
         return $kept ?? ['base' => $base, 'commits' => $commits];
+    }
+
+    /**
+     * The history a commit stands on, newest first, down its first parents: what
+     * the studio looks through to find the newest commit GitHub has.
+     *
+     * @return list<string>
+     */
+    public function ancestors(string $sha, int $most = 300): array
+    {
+        return array_values(array_filter(explode("\n", (string) $this->git(['rev-list', '--first-parent', '-n', (string) $most, $sha]))));
     }
 
     /**
@@ -473,6 +507,22 @@ final class LocalBranch
     {
         $process = new Process(['git', ...$arguments], $this->root, timeout: 120);
         $process->run();
+
+        return $process->isSuccessful() ? trim($process->getOutput()) : null;
+    }
+
+    /**
+     * @param  list<string>  $arguments
+     */
+    private function withoutAsking(array $arguments): ?string
+    {
+        $process = new Process(['git', ...$arguments], $this->root, ['GIT_TERMINAL_PROMPT' => '0', 'GIT_ASKPASS' => 'echo', 'SSH_ASKPASS' => 'echo'], timeout: self::QUICK_SECONDS);
+
+        try {
+            $process->run();
+        } catch (ProcessTimedOutException) {
+            return null;
+        }
 
         return $process->isSuccessful() ? trim($process->getOutput()) : null;
     }

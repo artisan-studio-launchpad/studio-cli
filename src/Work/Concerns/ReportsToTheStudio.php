@@ -13,6 +13,8 @@ namespace ArtisanStudio\StudioCli\Work\Concerns;
  */
 trait ReportsToTheStudio
 {
+    use TimesTheWork;
+
     private const int LONGEST_NOTE = 8000;
 
     private const int LONGEST_LINE = 240;
@@ -76,7 +78,7 @@ trait ReportsToTheStudio
             'finished' => $going ? null : microtime(true),
             'tools' => $this->tools,
             'waited' => $this->waited[$number] ?? 0.0,
-            'worked' => $going ? null : ($this->worked[$number] ?? null),
+            'worked' => $this->worked[$number] ?? null,
             'done' => $this->done[$number] ?? 0,
         ];
 
@@ -165,6 +167,7 @@ trait ReportsToTheStudio
     private function step(string $line): void
     {
         $this->journal->note($line);
+        $this->timelineSent();
 
         if ($this->session > 0) {
             $this->studio->submitScanWork(['session' => $this->session, 'said' => mb_substr($line, 0, 8000)]);

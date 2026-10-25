@@ -308,6 +308,7 @@ final class FixPanel
 
                 return match (true) {
                     $started && isset($progress['rulesets'][$key]) => $this->row($scanned['group'], $key, $scanned['name'], $progress['rulesets'][$key], $stopped, 'next'),
+                    ($scanned['state'] ?? null) === ScanRules::FAILED => $this->plain($scanned['group'], $key, $scanned['name'], self::OFF, 0, 'did not run'),
                     ! in_array($key, $fixable, true) => $found > 0
                         ? $this->plain($scanned['group'], $key, $scanned['name'], self::YOURS, $found, Says::named('{name} will assist you'))
                         : $this->plain($scanned['group'], $key, $scanned['name'], self::CLEAN, 0, 'all clear'),
@@ -352,7 +353,7 @@ final class FixPanel
             'count' => match ($state) {
                 self::CLEAN => $key === 'tests' ? $this->leftOutOf($key, 0) : '0',
                 self::YOURS => $this->leftOutOf($key, $found),
-                default => number_format($found).' found',
+                default => $found === 0 ? '—' : number_format($found).' found',
             },
             'fraction' => null,
             'percent' => null,

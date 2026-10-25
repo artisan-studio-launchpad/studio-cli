@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ArtisanStudio\StudioCli\Scan;
 
+use ArtisanStudio\StudioCli\Scan\Tools\Tests;
 use ArtisanStudio\StudioCli\Scan\Tools\Toolbox;
 use ArtisanStudio\StudioCli\StateFile;
 use Closure;
@@ -22,8 +23,6 @@ final class ToolStatus
     public const string OFF = 'off';
 
     private const int CHECK_EVERY_SECONDS = 10;
-
-    private const int TESTS_MOST_SECONDS = 1900;
 
     /**
      * @var array{key: string, missing: array<string, array{name: string, packages: list<string>, files: array<string, string>, about: string}>}|null
@@ -150,7 +149,7 @@ final class ToolStatus
     {
         $tests = $this->tests();
 
-        return $tests !== null && $tests['state'] === self::RUNNING && Carbon::parse($tests['at'])->diffInSeconds(Carbon::now(), true) < self::TESTS_MOST_SECONDS;
+        return $tests !== null && $tests['state'] === self::RUNNING && Carbon::parse($tests['at'])->diffInSeconds(Carbon::now(), true) < (new Tests)->timeout() + 100;
     }
 
     public function testsOff(): void

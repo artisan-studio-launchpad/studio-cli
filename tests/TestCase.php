@@ -33,7 +33,7 @@ abstract class TestCase extends Orchestra
         StateFile::keepIn($state);
 
         $this->app->instance(SnapshotSource::class, new SampleSnapshots);
-        config(['studio-cli.branches' => ['fixes' => 'studio/fixes-', 'build' => 'studio/build-', 'commit_scope' => 'studio', 'lock' => 'studio-fixes.lock']]);
+        config(['studio-cli.branches' => ['fixes' => 'studio/fixes-', 'build' => 'studio/build-', 'commit_scope' => 'studio', 'lock' => 'studio-fixes.lock'], 'studio-cli.review.keep_front' => false]);
         $this->app->instance(Says::class, new class extends Says
         {
             public function __construct() {}
