@@ -340,9 +340,14 @@ return [
     | log, in storage/studio/bridge on this machine. Off, the log keeps only
     | how big each task was, how long it took and what it cost.
     |
+    | `codex` allows the Codex runner. It is off in this release: Codex is
+    | never offered, never chosen for you, and `--runner=codex` is refused
+    | until this is true.
+    |
     */
 
     'bridge' => [
         'debug' => (bool) env('STUDIO_CLI_BRIDGE_DEBUG', false),
+        'codex' => (bool) env('STUDIO_CLI_BRIDGE_CODEX', false),
     ],
 ];

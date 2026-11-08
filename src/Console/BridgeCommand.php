@@ -20,14 +20,14 @@ class BridgeCommand extends Command
     public const string SIGNATURE = 'studio:bridge';
 
     protected $signature = self::SIGNATURE.'
-        {--runner=auto : claude, codex, or auto to use the first one signed in}
+        {--runner=claude : claude. codex is refused unless studio-cli.bridge.codex is turned on}
         {--plain : Accepted so the studio can start it like its other background tasks}
         {--workers=4 : How many tasks to run at the same time}
         {--once : Run one task and stop, or stop when none comes}
         {--wait=60 : With --once, how many seconds to wait for a task}
         {--interval=2 : Seconds between asking the studio for work}';
 
-    protected $description = 'Let Artisan Studio use the Claude or Codex you are already signed in to on this machine, for this project only, and log every task it runs';
+    protected $description = 'Let Artisan Studio use the Claude Code you are already signed in to on this machine, for this project only, and log every task it runs';
 
     public function handle(Studio $studio, Shell $shell): int
     {
@@ -126,35 +126,32 @@ class BridgeCommand extends Command
     {
         $choice = (string) $this->option('runner');
 
-        $candidates = match ($choice) {
-            'claude' => [new ClaudeRunner($shell)],
-            'codex' => [new CodexRunner($shell)],
-            'auto' => [new ClaudeRunner($shell), new CodexRunner($shell)],
-            default => [],
-        };
-
-        if ($candidates === []) {
-            $this->components->error('The runner is claude, codex or auto.');
+        if ($choice === 'codex' && config('studio-cli.bridge.codex') !== true) {
+            $this->components->error(__('studio-cli::bridge.runner.codex_off'));
 
             return null;
         }
 
-        $reasons = [];
+        $runner = match ($choice) {
+            'claude' => new ClaudeRunner($shell),
+            'codex' => new CodexRunner($shell),
+            default => null,
+        };
 
-        foreach ($candidates as $candidate) {
-            $reason = $candidate->notReady();
+        if ($runner === null) {
+            $this->components->error(__('studio-cli::bridge.runner.unknown'));
 
-            if ($reason === null) {
-                return $candidate;
-            }
-
-            $reasons[] = $reason;
+            return null;
         }
 
-        foreach ($reasons as $reason) {
+        $reason = $runner->notReady();
+
+        if ($reason !== null) {
             $this->components->error($reason);
+
+            return null;
         }
 
-        return null;
+        return $runner;
     }
 }

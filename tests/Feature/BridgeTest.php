@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use ArtisanStudio\StudioCli\Bridge\CodexRunner;
 use ArtisanStudio\StudioCli\Bridge\Shell;
 use ArtisanStudio\StudioCli\Console\BridgeCommand;
 use ArtisanStudio\StudioCli\Saloon\Requests\ClaimAiTaskRequest;
@@ -194,4 +195,72 @@ it('reads a claim of nothing as no task', function (): void {
     Saloon::fake([ClaimAiTaskRequest::class => MockResponse::make('', 204)]);
 
     expect(app(Studio::class)->claimAiTask())->toBeNull();
+});
+
+it('uses only the Claude runner by default, and never falls back to Codex', function (): void {
+    $machine = aMachineWith(['codex'], ['codex login' => ['exit' => 0, 'out' => 'Logged in', 'err' => '']]);
+    app()->instance(Shell::class, $machine);
+    Saloon::fake([ClaimAiTaskRequest::class => aTask()]);
+
+    $this->artisan(BridgeCommand::SIGNATURE, ['--once' => true])->assertFailed();
+
+    expect(collect($machine->ran)->contains(fn (array $call): bool => $call['command'][0] === 'codex'))->toBeFalse();
+    Saloon::assertNothingSent();
+});
+
+it('refuses --runner=codex while studio-cli.bridge.codex is off, and runs nothing', function (): void {
+    $machine = aMachineWith(['codex'], ['codex login' => ['exit' => 0, 'out' => 'Logged in', 'err' => '']]);
+    app()->instance(Shell::class, $machine);
+    Saloon::fake([ClaimAiTaskRequest::class => aTask()]);
+
+    expect(config('studio-cli.bridge.codex'))->toBeFalse();
+    $this->artisan(BridgeCommand::SIGNATURE, ['--runner' => 'codex', '--once' => true])->assertFailed();
+
+    expect($machine->ran)->toBe([]);
+    Saloon::assertNothingSent();
+});
+
+it('accepts --runner=codex only when studio-cli.bridge.codex is on', function (): void {
+    config(['studio-cli.bridge.codex' => true]);
+    app()->instance(Shell::class, aMachineWith(['codex'], ['codex login' => ['exit' => 0, 'out' => 'Logged in', 'err' => '']]));
+    Saloon::fake([ClaimAiTaskRequest::class => MockResponse::make('', 204)]);
+
+    $this->artisan(BridgeCommand::SIGNATURE, ['--runner' => 'codex', '--once' => true, '--wait' => 0])->assertSuccessful();
+
+    Saloon::assertSent(ClaimAiTaskRequest::class);
+});
+
+it('gives Codex a private folder for its answer and removes it afterwards', function (): void {
+    $seen = [];
+    $shell = new class($seen) extends Shell
+    {
+        public function __construct(public array &$seen) {}
+
+        public function find(string $program): ?string
+        {
+            return '/usr/local/bin/'.$program;
+        }
+
+        public function run(array $command, string $input, string $cwd, int $timeout): array
+        {
+            if (($command[1] ?? null) !== 'exec') {
+                return ['exit' => 0, 'out' => 'Logged in', 'err' => '', 'timedOut' => false];
+            }
+
+            $answer = $command[array_search('-o', $command, true) + 1];
+            $this->seen = ['answer' => $answer, 'mode' => fileperms(dirname($answer)) & 0777, 'is_folder' => is_dir(dirname($answer)), 'under_temp' => str_starts_with($answer, sys_get_temp_dir())];
+            file_put_contents($answer, 'pong');
+
+            return ['exit' => 0, 'out' => '{"type":"turn.completed","usage":{"input_tokens":2,"output_tokens":1}}', 'err' => '', 'timedOut' => false];
+        }
+    };
+
+    $outcome = (new CodexRunner($shell))->run(['prompt' => 'Reply', 'instructions' => '', 'model' => 'haiku', 'timeout' => 30]);
+
+    expect($outcome->ok)->toBeTrue()
+        ->and($seen['is_folder'])->toBeTrue()
+        ->and($seen['mode'])->toBe(0700)
+        ->and($seen['under_temp'])->toBeTrue()
+        ->and(file_exists($seen['answer']))->toBeFalse()
+        ->and(is_dir(dirname($seen['answer'])))->toBeFalse();
 });
