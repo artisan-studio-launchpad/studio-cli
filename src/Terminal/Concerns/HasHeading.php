@@ -18,6 +18,10 @@ trait HasHeading
 
     private string|Closure $statusColour = 'soft';
 
+    private string|Closure|null $notice = null;
+
+    private string|Closure $noticeColour = 'soft';
+
     public function heading(string|Closure $heading): static
     {
         $this->heading = $heading;
@@ -48,6 +52,27 @@ trait HasHeading
         $this->statusColour = $colour;
 
         return $this;
+    }
+
+    /**
+     * A line of its own under the heading, on every tab, while it is not empty.
+     */
+    public function notice(string|Closure|null $notice, string|Closure $colour = 'soft'): static
+    {
+        $this->notice = $notice;
+        $this->noticeColour = $colour;
+
+        return $this;
+    }
+
+    public function getNotice(): string
+    {
+        return (string) $this->evaluate($this->notice);
+    }
+
+    public function getNoticeColour(): string
+    {
+        return (string) $this->evaluate($this->noticeColour);
     }
 
     public function getStatus(): string

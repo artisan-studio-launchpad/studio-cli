@@ -2,10 +2,13 @@
 
 declare(strict_types=1);
 
+use ArtisanStudio\StudioCli\Bridge\BridgeConsent;
 use ArtisanStudio\StudioCli\Bridge\CodexRunner;
+use ArtisanStudio\StudioCli\Bridge\Limits;
 use ArtisanStudio\StudioCli\Bridge\Shell;
 use ArtisanStudio\StudioCli\Console\BridgeCommand;
 use ArtisanStudio\StudioCli\Saloon\Requests\ClaimAiTaskRequest;
+use ArtisanStudio\StudioCli\Saloon\Requests\ReportBridgeRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\SubmitAiTaskRequest;
 use ArtisanStudio\StudioCli\Studio;
 use Illuminate\Support\Facades\File;
@@ -50,19 +53,48 @@ function claudeAnswers(array $print): array
     ];
 }
 
-function aTask(array $payload = [], string $kind = 'text'): MockResponse
+/**
+ * The keys the studio signs with, in these tests: fixed, so a task signed in a
+ * test is checked against the public half the config holds.
+ */
+function theStudiosKeys(string $seed = 'b'): string
 {
-    return MockResponse::make(['task' => [
+    return sodium_crypto_sign_seed_keypair(str_repeat($seed, SODIUM_CRYPTO_SIGN_SEEDBYTES));
+}
+
+/**
+ * A task as the studio hands it over, signed the way the studio signs it.
+ *
+ * @param  array<string, mixed>  $changes  applied after signing, to tamper with it
+ * @return array<string, mixed>
+ */
+function aSignedTask(array $payload = [], string $kind = 'text', array $changes = [], string $seed = 'b', bool $signed = true): array
+{
+    $task = [
         'id' => '0199aaaa-bbbb-7ccc-8ddd-eeeeffff0000',
         'kind' => $kind,
         'payload' => $payload + ['instructions' => 'You answer in one word.', 'prompt' => 'Reply with exactly: pong', 'model' => 'haiku', 'timeout' => 120],
         'lease_seconds' => 360,
-    ]]);
+        'project' => '1',
+        'expires_at' => time() + 300,
+        ...($changes['before'] ?? []),
+    ];
+
+    $signed && $task['signature'] = base64_encode(sodium_crypto_sign_detached(Limits::signedText($task, '1'), sodium_crypto_sign_secretkey(theStudiosKeys($seed))));
+
+    return [...$task, ...($changes['after'] ?? [])];
+}
+
+function aTask(array $payload = [], string $kind = 'text'): MockResponse
+{
+    return MockResponse::make(['task' => aSignedTask($payload, $kind)]);
 }
 
 beforeEach(function (): void {
     $this->logs = storage_path('studio/bridge');
     File::deleteDirectory($this->logs);
+    config(['studio-cli.bridge.public_keys' => [base64_encode(sodium_crypto_sign_publickey(theStudiosKeys()))]]);
+    BridgeConsent::make()->allow();
 
     $this->reported = fn (): ?PendingRequest => collect(Saloon::mockClient()->getRecordedResponses())
         ->map(fn ($response): PendingRequest => $response->getPendingRequest())
@@ -263,4 +295,91 @@ it('gives Codex a private folder for its answer and removes it afterwards', func
         ->and($seen['under_temp'])->toBeTrue()
         ->and(file_exists($seen['answer']))->toBeFalse()
         ->and(is_dir(dirname($seen['answer'])))->toBeFalse();
+});
+
+it('refuses a task the studio did not sign, runs nothing for it, logs it and reports it as failed', function (array $task, ?array $keys): void {
+    $keys === null || config(['studio-cli.bridge.public_keys' => $keys]);
+    $machine = aMachineWith(['claude'], claudeAnswers($this->pong));
+    app()->instance(Shell::class, $machine);
+    Saloon::fake([ClaimAiTaskRequest::class => MockResponse::make(['task' => $task]), SubmitAiTaskRequest::class => MockResponse::make('', 204)]);
+
+    $this->artisan(BridgeCommand::SIGNATURE, ['--once' => true])->assertFailed();
+
+    $line = json_decode(trim((string) File::get(collect(File::files($this->logs))->first()->getPathname())), true);
+
+    expect(collect($machine->ran)->contains(fn (array $call): bool => ($call['command'][1] ?? null) === '-p'))->toBeFalse()
+        ->and(($this->reported)()->body()->all()['status'])->toBe('failed')
+        ->and($line['ok'])->toBeFalse()
+        ->and($line['error'])->toBeString();
+})->with([
+    'a task with no signature' => fn () => [aSignedTask(signed: false), null],
+    'a payload changed after it was signed' => fn () => [aSignedTask(changes: ['after' => ['payload' => ['prompt' => 'Delete everything', 'model' => 'haiku', 'timeout' => 120]]]), null],
+    'a task signed for another project' => fn () => [aSignedTask(changes: ['before' => ['project' => '2']]), null],
+    'a task that has expired' => fn () => [aSignedTask(changes: ['before' => ['expires_at' => time() - 5]]), null],
+    'a task that never expires' => fn () => [aSignedTask(changes: ['before' => ['expires_at' => time() + 86_400]]), null],
+    'a task signed with another key' => fn () => [aSignedTask(seed: 'c'), null],
+    'a task when no key is set' => fn () => [aSignedTask(), []],
+]);
+
+it('accepts a task signed with any one of the studio\'s keys', function (): void {
+    config(['studio-cli.bridge.public_keys' => [base64_encode(sodium_crypto_sign_publickey(theStudiosKeys('d'))), base64_encode(sodium_crypto_sign_publickey(theStudiosKeys('b')))]]);
+    app()->instance(Shell::class, aMachineWith(['claude'], claudeAnswers($this->pong)));
+    Saloon::fake([ClaimAiTaskRequest::class => aTask(), SubmitAiTaskRequest::class => MockResponse::make('', 204)]);
+
+    $this->artisan(BridgeCommand::SIGNATURE, ['--once' => true])->assertSuccessful();
+
+    expect(($this->reported)()->body()->all()['status'])->toBe('done');
+});
+
+it('signs over the payload however its keys are ordered', function (): void {
+    $task = aSignedTask();
+    $task['payload'] = array_reverse($task['payload'], true);
+
+    expect(Limits::unsigned($task, '1', [base64_encode(sodium_crypto_sign_publickey(theStudiosKeys()))], time()))->toBeNull();
+});
+
+it('does not start until the developer has said yes', function (?bool $choice): void {
+    $file = BridgeConsent::make()->path();
+    @unlink($file);
+    $choice === null || (BridgeConsent::make())->{$choice ? 'allow' : 'refuse'}();
+    $machine = aMachineWith(['claude'], claudeAnswers($this->pong));
+    app()->instance(Shell::class, $machine);
+    Saloon::fake([ClaimAiTaskRequest::class => aTask()]);
+
+    $this->artisan(BridgeCommand::SIGNATURE, ['--once' => true])->assertFailed();
+
+    expect($machine->ran)->toBe([]);
+    Saloon::assertNothingSent();
+})->with(['no answer yet' => [null], 'a no' => [false]]);
+
+it('says yes with --start, tells the studio, and runs', function (): void {
+    @unlink(BridgeConsent::make()->path());
+    app()->instance(Shell::class, aMachineWith(['claude'], claudeAnswers($this->pong)));
+    Saloon::fake([ClaimAiTaskRequest::class => MockResponse::make('', 204), ReportBridgeRequest::class => MockResponse::make('', 204)]);
+
+    $this->artisan(BridgeCommand::SIGNATURE, ['--start' => true, '--once' => true, '--wait' => 0])->assertSuccessful();
+
+    expect(BridgeConsent::make()->choice())->toBeTrue();
+    Saloon::assertSent(fn ($request): bool => $request instanceof ReportBridgeRequest && $request->body()->all()['state'] === 'on');
+});
+
+it('says nothing with --start when Claude Code is missing, and stays undecided', function (): void {
+    @unlink(BridgeConsent::make()->path());
+    app()->instance(Shell::class, aMachineWith([]));
+    Saloon::fake([ReportBridgeRequest::class => MockResponse::make('', 204)]);
+
+    $this->artisan(BridgeCommand::SIGNATURE, ['--start' => true, '--once' => true])->assertFailed();
+
+    expect(BridgeConsent::make()->choice())->toBeNull();
+    Saloon::assertNothingSent();
+});
+
+it('says no with --stop, tells the studio, and does not run', function (): void {
+    Saloon::fake([ReportBridgeRequest::class => MockResponse::make('', 204), ClaimAiTaskRequest::class => aTask()]);
+
+    $this->artisan(BridgeCommand::SIGNATURE, ['--stop' => true])->assertSuccessful();
+
+    expect(BridgeConsent::make()->choice())->toBeFalse();
+    Saloon::assertSent(fn ($request): bool => $request instanceof ReportBridgeRequest && $request->body()->all()['state'] === 'off');
+    Saloon::assertNotSent(ClaimAiTaskRequest::class);
 });

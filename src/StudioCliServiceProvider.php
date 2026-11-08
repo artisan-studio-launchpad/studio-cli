@@ -4,7 +4,10 @@ declare(strict_types=1);
 
 namespace ArtisanStudio\StudioCli;
 
+use ArtisanStudio\StudioCli\Bridge\BridgeConsent;
 use ArtisanStudio\StudioCli\Bridge\BridgeKeeper;
+use ArtisanStudio\StudioCli\Bridge\BridgeSetup;
+use ArtisanStudio\StudioCli\Bridge\ClaudeAccount;
 use ArtisanStudio\StudioCli\Console\AvatarSyncCommand;
 use ArtisanStudio\StudioCli\Console\BlueprintCommand;
 use ArtisanStudio\StudioCli\Console\BridgeCommand;
@@ -78,6 +81,12 @@ class StudioCliServiceProvider extends ServiceProvider
         $this->app->singleton(EnvFile::class, fn (): EnvFile => new EnvFile($this->app->basePath('.env')));
 
         $this->app->singleton(TestSuite::class, fn (): TestSuite => new TestSuite($this->app->basePath()));
+
+        $this->app->bind(BridgeConsent::class, fn (): BridgeConsent => BridgeConsent::make());
+
+        $this->app->singleton(ClaudeAccount::class);
+
+        $this->app->singleton(BridgeSetup::class);
 
         $this->app->singleton(BridgeKeeper::class);
 

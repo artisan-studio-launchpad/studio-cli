@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ArtisanStudio\StudioCli\Tests;
 
+use ArtisanStudio\StudioCli\Bridge\Shell;
 use ArtisanStudio\StudioCli\Dashboard\SampleSnapshots;
 use ArtisanStudio\StudioCli\Dashboard\SnapshotSource;
 use ArtisanStudio\StudioCli\Says;
@@ -33,6 +34,19 @@ abstract class TestCase extends Orchestra
         StateFile::keepIn($state);
 
         $this->app->instance(SnapshotSource::class, new SampleSnapshots);
+        $this->app->instance(Shell::class, new class extends Shell
+        {
+            public function find(string $program): ?string
+            {
+                return '/usr/local/bin/'.$program;
+            }
+
+            public function run(array $command, string $input, string $cwd, int $timeout): array
+            {
+                return ['exit' => 0, 'out' => '{"loggedIn":true}', 'err' => '', 'timedOut' => false];
+            }
+        });
+        config(['studio-cli.bridge.consent_file' => sys_get_temp_dir().'/studio-consent-'.bin2hex(random_bytes(6)).'.json']);
         config(['studio-cli.branches' => ['fixes' => 'studio/fixes-', 'build' => 'studio/build-', 'commit_scope' => 'studio', 'lock' => 'studio-fixes.lock'], 'studio-cli.review.keep_front' => false]);
         $this->app->instance(Says::class, new class extends Says
         {

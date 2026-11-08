@@ -11,9 +11,10 @@ use Closure;
 
 /**
  * Keeps the AI bridge running for as long as the studio is open, so the
- * developer runs one command, not two. It runs as part of the studio and stops
- * with it. A machine with no Claude or Codex signed in lets it end at once, so
- * it is tried again only once a minute.
+ * developer runs one command, not two, and only when they said yes. It runs as
+ * part of the studio and stops with it. A machine where Claude Code is not
+ * installed or not signed in lets it end at once, so it is tried again only
+ * once a minute.
  */
 final class BridgeKeeper
 {
@@ -29,12 +30,13 @@ final class BridgeKeeper
     public function __construct(
         private readonly Studio $studio,
         private readonly BackgroundTasks $tasks,
+        private readonly BridgeConsent $consent,
         private readonly ?Closure $starter = null,
     ) {}
 
     public function keep(): void
     {
-        if (! $this->studio->isLinked() || $this->tasks->isRunning(self::TASK)) {
+        if (! $this->consent->isAllowed() || ! $this->studio->isLinked() || $this->tasks->isRunning(self::TASK)) {
             return;
         }
 
@@ -46,10 +48,36 @@ final class BridgeKeeper
 
         ($this->starter ?? fn () => $this->tasks->start(
             self::TASK,
-            'AI bridge',
-            'Letting SAMI use the Claude or Codex already on this machine…',
+            __('studio-cli::bridge.task.label'),
+            __('studio-cli::bridge.task.working'),
             [BridgeCommand::SIGNATURE],
             timeout: 0,
         ))();
+    }
+
+    public function isRunning(): bool
+    {
+        return $this->tasks->isRunning(self::TASK);
+    }
+
+    /**
+     * The developer said yes: remember it, tell the studio, and start.
+     */
+    public function allow(): void
+    {
+        $this->consent->allow();
+        $this->studio->reportBridge(true);
+        $this->triedAt = null;
+        $this->keep();
+    }
+
+    /**
+     * The developer said no: remember it, tell the studio, and stop.
+     */
+    public function refuse(): void
+    {
+        $this->consent->refuse();
+        $this->studio->reportBridge(false);
+        $this->tasks->stop([self::TASK]);
     }
 }

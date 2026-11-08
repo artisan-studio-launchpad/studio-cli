@@ -6,6 +6,7 @@ namespace ArtisanStudio\StudioCli\Console;
 
 use ArtisanStudio\StudioCli\BackgroundTasks;
 use ArtisanStudio\StudioCli\Bridge\BridgeKeeper;
+use ArtisanStudio\StudioCli\Bridge\BridgeSetup;
 use ArtisanStudio\StudioCli\Dashboard\DashboardSnapshot;
 use ArtisanStudio\StudioCli\Dashboard\FreshSnapshots;
 use ArtisanStudio\StudioCli\Dashboard\SampleSnapshots;
@@ -63,6 +64,8 @@ class StudioCommand extends Command implements HasScreen
     private ?int $workOpened = null;
 
     private ?string $askedForTheToken = null;
+
+    private bool $askedAboutTheBridge = false;
 
     /**
      * @var list<int>
@@ -183,6 +186,26 @@ class StudioCommand extends Command implements HasScreen
 
         $this->askedForTheToken = $connection;
         $this->getScreen()->startSetting($action);
+    }
+
+    /**
+     * Once the token is good, and the developer has not said yet, asks whether
+     * Artisan Studio may run its AI tasks through their Claude Code login.
+     * With Claude Code missing or signed out nothing is asked: the screen says
+     * what is missing and the studio goes on without the bridge.
+     */
+    private function askAboutTheBridgeOnce(): void
+    {
+        if ($this->askedAboutTheBridge || $this->option('demo') || $this->option('once') || $this->option('tab') || $this->laravel->make(Studio::class)->connection() !== Studio::CONNECTED) {
+            return;
+        }
+
+        $this->askedAboutTheBridge = true;
+        $setup = $this->laravel->make(BridgeSetup::class);
+
+        if ($setup->isUndecided() && $setup->notReady() === null) {
+            $this->getScreen()->startSetting('bridge');
+        }
     }
 
     /**
@@ -354,6 +377,7 @@ class StudioCommand extends Command implements HasScreen
     protected function screenTicked(): void
     {
         $this->askForTheTokenWhenNotLinked();
+        $this->askAboutTheBridgeOnce();
         $this->laravel->make(BridgeKeeper::class)->keep();
         $this->openInsightsWhenFixesAreAsked();
         $this->sendTheFilesAsked();
@@ -389,6 +413,7 @@ class StudioCommand extends Command implements HasScreen
                 fn (DashboardSnapshot $data): string => $data->healthColour(),
             )
             ->aside(fn (DashboardSnapshot $data): string => 'updated '.LocalTime::of($data->takenAt->toIso8601String()))
+            ->notice(fn (): string => app(BridgeSetup::class)->line(), fn (): string => app(BridgeSetup::class)->lineColour())
             ->openUrl(fn (): string => (string) config('studio-cli.url'))
             ->tabs($studio->tabs())
             ->showTabsAlone()

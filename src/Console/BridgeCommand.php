@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace ArtisanStudio\StudioCli\Console;
 
+use ArtisanStudio\StudioCli\Bridge\BridgeConsent;
+use ArtisanStudio\StudioCli\Bridge\BridgeKeeper;
 use ArtisanStudio\StudioCli\Bridge\BridgeLog;
 use ArtisanStudio\StudioCli\Bridge\BridgeWorker;
 use ArtisanStudio\StudioCli\Bridge\BridgeWorkers;
@@ -20,6 +22,8 @@ class BridgeCommand extends Command
     public const string SIGNATURE = 'studio:bridge';
 
     protected $signature = self::SIGNATURE.'
+        {--start : Say yes to the AI bridge for this project, then run it}
+        {--stop : Say no to the AI bridge for this project, and stop it}
         {--runner=claude : claude. codex is refused unless studio-cli.bridge.codex is turned on}
         {--plain : Accepted so the studio can start it like its other background tasks}
         {--workers=4 : How many tasks to run at the same time}
@@ -37,10 +41,31 @@ class BridgeCommand extends Command
             return self::FAILURE;
         }
 
+        if ($this->option('stop')) {
+            app(BridgeKeeper::class)->refuse();
+            $this->components->info(__('studio-cli::bridge.consent.refused'));
+
+            return self::SUCCESS;
+        }
+
+        $consent = app(BridgeConsent::class);
+
+        if (! $this->option('start') && ! $consent->isAllowed()) {
+            $this->components->error(__('studio-cli::bridge.consent.not_given'));
+
+            return self::FAILURE;
+        }
+
         $runner = $this->runner($shell);
 
         if ($runner === null) {
             return self::FAILURE;
+        }
+
+        if ($this->option('start')) {
+            $consent->allow();
+            $studio->reportBridge(true);
+            $this->components->info(__('studio-cli::bridge.consent.allowed'));
         }
 
         $log = new BridgeLog(storage_path('studio/bridge'), (bool) config('studio-cli.bridge.debug'));

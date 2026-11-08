@@ -344,10 +344,20 @@ return [
     | never offered, never chosen for you, and `--runner=codex` is refused
     | until this is true.
     |
+    | `public_keys` are the Ed25519 public keys, base64 and comma separated
+    | in STUDIO_CLI_BRIDGE_KEYS, that Artisan Studio signs its AI tasks with.
+    | A task that is not signed by one of them is refused, and with none set
+    | every task is.
+    |
+    | `consent_file` is where the developer's yes or no is kept. Left empty,
+    | it is ~/.config/artisan-studio/bridge.json, readable by the user only.
+    |
     */
 
     'bridge' => [
         'debug' => (bool) env('STUDIO_CLI_BRIDGE_DEBUG', false),
         'codex' => (bool) env('STUDIO_CLI_BRIDGE_CODEX', false),
+        'public_keys' => array_values(array_filter(array_map('trim', explode(',', (string) env('STUDIO_CLI_BRIDGE_KEYS', ''))))),
+        'consent_file' => env('STUDIO_CLI_BRIDGE_CONSENT_FILE'),
     ],
 ];

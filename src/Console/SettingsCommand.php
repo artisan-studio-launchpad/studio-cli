@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ArtisanStudio\StudioCli\Console;
 
+use ArtisanStudio\StudioCli\Bridge\BridgeSetup;
 use ArtisanStudio\StudioCli\Dashboard\NotConnected;
 use ArtisanStudio\StudioCli\Dashboard\SnapshotSource;
 use ArtisanStudio\StudioCli\Editor;
@@ -100,6 +101,12 @@ class SettingsCommand extends Command implements ProvidesSettings
                     ->visible(fn (array $state): bool => $state['linked'])
                     ->requiresConfirmation('This takes the token and project out of your .env.')
                     ->action(fn (): string => $this->unlink()),
+                Action::make('bridge')
+                    ->label(__('studio-cli::bridge.consent.label'))
+                    ->visible(fn (array $state): bool => $state['linked'])
+                    ->question(__('studio-cli::bridge.consent.question'))
+                    ->options(fn (): array => app(BridgeSetup::class)->choices())
+                    ->action(fn (string $choice): string => app(BridgeSetup::class)->choose($choice)),
             ]);
     }
 
@@ -117,6 +124,7 @@ class SettingsCommand extends Command implements ProvidesSettings
             'linked' => $linked,
             'rows' => [
                 ...($linked ? $this->linkedRows($current) : $this->unlinkedRows()),
+                ...($linked ? [app(BridgeSetup::class)->row()] : []),
                 ['label' => 'Editor', 'value' => $editor->describe(), 'status' => '', 'colour' => 'dim'],
             ],
             'problem' => $this->problem,

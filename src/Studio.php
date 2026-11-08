@@ -13,6 +13,7 @@ use ArtisanStudio\StudioCli\Saloon\Requests\PickScanRulesRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\PingRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\PlanNodePatchesRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\ReadToolOutputRequest;
+use ArtisanStudio\StudioCli\Saloon\Requests\ReportBridgeRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\ReportScanToolProgressRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\RunScanCheckRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\SayGoodbyeRequest;
@@ -164,6 +165,16 @@ class Studio
         $task = $this->quietly(new ClaimAiTaskRequest($this->project()))['task'] ?? null;
 
         return is_array($task) && isset($task['id']) ? $task : null;
+    }
+
+    /**
+     * Tells the studio whether this machine lets it run AI tasks through the
+     * developer's own Claude Code, so the app can say which features need it.
+     * Nothing about the account is sent.
+     */
+    public function reportBridge(bool $on): void
+    {
+        $this->quietly(new ReportBridgeRequest($this->project(), $on));
     }
 
     /**

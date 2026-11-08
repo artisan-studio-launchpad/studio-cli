@@ -203,6 +203,7 @@ trait RendersFrame
         return array_values(array_filter([
             $canvas->row($canvas->spread($heading.$description, $aside, $inner), $width),
             $canvas->row($canvas->gradient(str_repeat('─', $inner)), $width),
+            $this->getNotice() === '' ? null : $canvas->row($canvas->span('● '.$canvas->fit($this->getNotice(), $inner - 2), $this->getNoticeColour()), $width),
             $this->showsTabs() || $this->hasSettings() ? $canvas->row($canvas->spread($this->tabsRow($canvas, $tab), $this->settingsTab($canvas), $inner), $width) : null,
             $canvas->blank($width),
         ]));
@@ -360,12 +361,12 @@ trait RendersFrame
      */
     private function choiceEntries(Canvas $canvas, Action $action, mixed $state, int $width): array
     {
-        $question = $action->getConfirmation();
+        $question = $action->getConfirmation() ?? $action->getQuestion();
         $choices = array_values($action->getChoices($state) ?? []);
         $label = fn (string $choice): string => $canvas->fit($choice, $width - 6);
 
         return [
-            ...($question === null ? [] : [$this->entry($canvas->span('    '.$canvas->fit($question, $width - 4), 'amber'))]),
+            ...($question === null ? [] : array_map(fn (string $line): array => $this->entry($canvas->span('    '.$line, 'amber')), $canvas->wrap($question, $width - 4))),
             ...array_map(
                 fn (string $choice, int $index): array => $this->entry(
                     $index === $this->settingsChoice
