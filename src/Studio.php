@@ -35,6 +35,7 @@ use ArtisanStudio\StudioCli\Saloon\Requests\SubmitScanFlagsRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\SubmitScanToolResultsRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\SubmitScanWorkRequest;
 use ArtisanStudio\StudioCli\Saloon\StudioConnector;
+use ArtisanStudio\StudioCli\Scan\ScanRules;
 use ArtisanStudio\StudioCli\Scan\StudioChecks;
 use ArtisanStudio\StudioCli\Scan\Tools\DefinedTool;
 use Closure;
@@ -225,6 +226,8 @@ class Studio
     {
         $answer = $this->quietly(new ShowScanToolsRequest($this->project()));
         is_array($answer['definitions'] ?? null) && DefinedTool::keep(base_path(), $answer['definitions']);
+
+        is_array($answer['groups'] ?? null) && ScanRules::keep(base_path(), $answer['groups']);
 
         $checks = is_array($answer['tools'] ?? null) ? $this->scanChecks() : null;
         $checks === null || StudioChecks::keep(base_path(), $checks);

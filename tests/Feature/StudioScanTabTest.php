@@ -9,6 +9,7 @@ use ArtisanStudio\StudioCli\Dashboard\SnapshotSource;
 use ArtisanStudio\StudioCli\Presence;
 use ArtisanStudio\StudioCli\Scan\ScanRules;
 use ArtisanStudio\StudioCli\Scan\ToolStatus;
+use ArtisanStudio\StudioCli\StateFile;
 use ArtisanStudio\StudioCli\Terminal\ScreenContainer;
 use ArtisanStudio\StudioCli\Terminal\StudioTabs;
 use Symfony\Component\Process\Process;
@@ -42,12 +43,19 @@ beforeEach(function (): void {
     app()->instance(ToolStatus::class, new ToolStatus($this->root));
     $this->status = app(ToolStatus::class);
     @unlink($this->status->path());
+    ScanRules::keep(base_path(), [
+        ['name' => 'Initial', 'tools' => ['tests']],
+        ['name' => 'Defaults', 'tools' => ['pint', 'rector', 'composer-audit', 'node-audit']],
+        ['name' => 'Studio', 'tools' => ['studio-security']],
+        ['name' => 'Advanced', 'tools' => ['phpstan', 'pest-type-coverage', 'pest-arch', 'pest-coverage']],
+    ]);
     $this->studio = app(StudioCommand::class)->screen(ScreenContainer::make());
     $this->scan = fn (): string => ($this->plain)($this->studio->render(170, 40, 'scan'));
 });
 
 afterEach(function (): void {
     @unlink($this->status->path());
+    @unlink(StateFile::for('scan-groups', base_path()));
 });
 
 it('sits before Insights, and the static analysis tab is gone', function (): void {
@@ -74,17 +82,17 @@ it('counts the issues each rule caught, group by group, Initial first, then what
     $this->status->testsFinished(['ran' => true, 'took' => 1000, 'summary' => ['tests' => 3577, 'failed' => 2, 'skipped' => 3]]);
     $rows = app(ScanRules::class)->rows();
 
-    expect(collect($rows)->pluck('key')->all())->toBe(['tests', 'rector', 'pint', 'composer-audit', 'phpstan'])
+    expect(collect($rows)->pluck('key')->all())->toBe(['tests', 'pint', 'rector', 'composer-audit', 'phpstan'])
         ->and(collect($rows)->pluck('group')->all())->toBe(['Initial', 'Defaults', 'Defaults', 'Defaults', 'Advanced'])
-        ->and(collect($rows)->pluck('caught', 'key')->all())->toBe(['tests' => 2, 'rector' => 3, 'pint' => 47, 'composer-audit' => 0, 'phpstan' => null])
+        ->and(collect($rows)->pluck('caught', 'key')->all())->toBe(['tests' => 2, 'pint' => 47, 'rector' => 3, 'composer-audit' => 0, 'phpstan' => null])
         ->and(app(ScanRules::class)->caught())->toBe(52);
 
     $screen = ($this->scan)();
 
     expect($screen)->toContain('52 issues')->toContain('detected across 5 rules')->toContain('Issues')->toContain('detected')->toContain('Initial')->toContain('Defaults')->toContain('Advanced')
         ->toContain('2 failing of 3,577')->toContain('all clear')->toContain('waiting')
-        ->and(strpos($screen, 'Rector'))->toBeLessThan(strpos($screen, 'Pint'))
-        ->and(strpos($screen, 'Pint'))->toBeLessThan(strpos($screen, 'composer audit'))
+        ->and(strpos($screen, 'Pint'))->toBeLessThan(strpos($screen, 'Rector'))
+        ->and(strpos($screen, 'Rector'))->toBeLessThan(strpos($screen, 'composer audit'))
         ->and(strpos($screen, 'composer audit'))->toBeLessThan(strpos($screen, 'PHPStan'));
 });
 
@@ -148,7 +156,7 @@ it('shows how long each rule takes: counting while it runs, and its time once do
 
     $rows = collect(app(ScanRules::class)->rows());
 
-    expect($rows->pluck('elapsed', 'key')->only(['pint', 'rector', 'tests'])->all())->toBe(['tests' => 125_000, 'rector' => 26_800, 'pint' => 4_700])
+    expect($rows->pluck('elapsed', 'key')->only(['pint', 'rector', 'tests'])->all())->toBe(['tests' => 125_000, 'pint' => 4_700, 'rector' => 26_800])
         ->and($rows->firstWhere('key', 'phpstan')['elapsed'])->toBeNull();
 
     $screen = ($this->scan)();
@@ -243,4 +251,26 @@ it('shows the problems Insights will list in the headline, with why, once the st
     $this->status->grouped(['problems' => 1, 'open' => 1]);
 
     expect(($this->scan)())->toContain('1 problem in Insights');
+});
+
+it('groups the rules as the studio says, and puts a rule it does not place under Other', function (): void {
+    ScanRules::keep(base_path(), [
+        ['name' => 'Basics', 'tools' => ['tests']],
+        ['name' => 'Extras', 'tools' => ['rector']],
+        ['tools' => ['pint']],
+        ['name' => 'Broken', 'tools' => 'pint'],
+    ]);
+    $this->status->asked(['tests']);
+    $this->status->pick(['pint', 'rector']);
+    $rows = collect(app(ScanRules::class)->rows());
+
+    expect($rows->pluck('group', 'key')->all())->toBe(['tests' => 'Basics', 'rector' => 'Extras', 'pint' => 'Other'])
+        ->and($rows->pluck('key')->all())->toBe(['tests', 'rector', 'pint']);
+});
+
+it('lists only the tests until the studio has said how to group the rules', function (): void {
+    @unlink(StateFile::for('scan-groups', base_path()));
+    $this->status->asked(['tests']);
+
+    expect(collect(app(ScanRules::class)->rows())->pluck('group', 'key')->all())->toBe(['tests' => 'Initial']);
 });

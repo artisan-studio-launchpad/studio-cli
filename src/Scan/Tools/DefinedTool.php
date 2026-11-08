@@ -151,11 +151,6 @@ final class DefinedTool extends Tool
         return (string) $this->definition['name'];
     }
 
-    public function group(): ?string
-    {
-        return is_string($this->definition['group'] ?? null) ? $this->definition['group'] : null;
-    }
-
     /**
      * Whether it reads every file.
      */

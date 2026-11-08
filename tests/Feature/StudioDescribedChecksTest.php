@@ -7,6 +7,7 @@ use ArtisanStudio\StudioCli\Saloon\Requests\ShowScanToolsRequest;
 use ArtisanStudio\StudioCli\Scan\StudioChecks;
 use ArtisanStudio\StudioCli\Scan\Tools\StudioRuleset;
 use ArtisanStudio\StudioCli\Scan\Tools\Toolbox;
+use ArtisanStudio\StudioCli\StateFile;
 use ArtisanStudio\StudioCli\Studio;
 use Illuminate\Support\Facades\Artisan;
 use Saloon\Http\Faking\MockResponse;
@@ -137,13 +138,16 @@ it('runs a described check from the command and lists the checks', function (): 
         ->and($unknown)->toBe(1);
 });
 
-it('keeps the checks the studio describes when it is asked which tools to run', function (): void {
+it('keeps the checks and the groups the studio describes when it is asked which tools to run', function (): void {
     Saloon::fake([
-        ShowScanToolsRequest::class => MockResponse::make(['tools' => ['studio-security']]),
+        ShowScanToolsRequest::class => MockResponse::make(['tools' => ['studio-security'], 'groups' => [['name' => 'Studio', 'tools' => ['studio-security']]]]),
         ShowScanChecksRequest::class => MockResponse::make(['checks' => $this->described]),
     ]);
 
     app(Studio::class)->scanTools();
 
-    expect(array_column(StudioChecks::described(base_path()), 'key'))->toBe(['livewire']);
+    expect(array_column(StudioChecks::described(base_path()), 'key'))->toBe(['livewire'])
+        ->and(json_decode((string) file_get_contents(StateFile::for('scan-groups', base_path())), true))->toBe([['name' => 'Studio', 'tools' => ['studio-security']]]);
+
+    @unlink(StateFile::for('scan-groups', base_path()));
 });

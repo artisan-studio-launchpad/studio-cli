@@ -6,8 +6,8 @@ namespace ArtisanStudio\StudioCli\Scan;
 
 use ArtisanStudio\StudioCli\BackgroundTasks;
 use ArtisanStudio\StudioCli\Console\TestsCommand;
-use ArtisanStudio\StudioCli\Scan\Tools\DefinedTool;
 use ArtisanStudio\StudioCli\Scan\Tools\Toolbox;
+use ArtisanStudio\StudioCli\StateFile;
 
 /**
  * The rules the scan checks, one row each, in the order of their group: what
@@ -30,18 +30,15 @@ final class ScanRules
 
     public const string OFF = 'off';
 
+    private const string STATE = 'scan-groups';
+
     /**
-     * The groups in the order they show, and the tools in each, as the app
-     * offers them to pick. The first group runs for everyone.
+     * What shows before the studio has said how to group the rules: the tests,
+     * which run for everyone.
      *
      * @var array<string, list<string>>
      */
-    public const array GROUPS = [
-        self::INITIAL => [TestsCommand::TESTS],
-        'Defaults' => ['rector', 'pint', 'composer-audit', 'node-audit'],
-        'Studio' => [],
-        'Advanced' => ['phpstan', 'pest-type-coverage', 'pest-arch', TestsCommand::COVERAGE],
-    ];
+    private const array BEFORE_THE_STUDIO_SAYS = [self::INITIAL => [TestsCommand::TESTS]];
 
     private const string OTHER = 'Other';
 
@@ -52,6 +49,46 @@ final class ScanRules
         private readonly BackgroundTasks $tasks,
         private readonly Toolbox $toolbox,
     ) {}
+
+    /**
+     * Keeps the groups the studio lists the rules under, and the tools in
+     * each, for every command that shows them.
+     *
+     * @param  array<mixed>  $groups
+     */
+    public static function keep(string $root, array $groups): void
+    {
+        @file_put_contents(StateFile::for(self::STATE, $root), (string) json_encode(array_values(array_filter($groups, self::isGroup(...)))));
+    }
+
+    private static function isGroup(mixed $group): bool
+    {
+        return is_array($group)
+            && is_string($group['name'] ?? null) && $group['name'] !== ''
+            && is_array($group['tools'] ?? null) && array_is_list($group['tools']) && collect($group['tools'])->every(fn (mixed $tool): bool => is_string($tool) && $tool !== '');
+    }
+
+    /**
+     * The groups in the order they show, and the tools in each, as the studio
+     * said. The first group runs for everyone.
+     *
+     * @return array<string, list<string>>
+     */
+    private function groups(): array
+    {
+        $kept = json_decode((string) @file_get_contents(StateFile::for(self::STATE, base_path())), true);
+        $groups = collect(is_array($kept) ? $kept : [])->filter(self::isGroup(...))->mapWithKeys(fn (array $group): array => [$group['name'] => $group['tools']])->all();
+
+        return $groups === [] ? self::BEFORE_THE_STUDIO_SAYS : $groups;
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function firstGroup(): array
+    {
+        return array_values($this->groups())[0];
+    }
 
     /**
      * Says whether the studio has a scan: when it has none, or has reset it,
@@ -73,7 +110,7 @@ final class ScanRules
             return $this->waiting();
         }
 
-        $keys = array_values(array_unique([...self::GROUPS[self::INITIAL], ...$this->status->picked(), ...array_diff($this->status->run()['tools'] ?? [], self::GROUPS[self::INITIAL])]));
+        $keys = array_values(array_unique([...$this->firstGroup(), ...$this->status->picked(), ...array_diff($this->status->run()['tools'] ?? [], $this->firstGroup())]));
 
         return array_values(collect($keys)
             ->sortBy(fn (string $key): int => $this->position($key))
@@ -90,7 +127,7 @@ final class ScanRules
      */
     public function waiting(): array
     {
-        return array_map(fn (string $key): array => ['group' => self::INITIAL, 'key' => $key, 'name' => $this->nameOf($key), 'state' => self::WAITING, 'caught' => null, 'note' => 'waiting', 'elapsed' => null], self::GROUPS[self::INITIAL]);
+        return array_map(fn (string $key): array => ['group' => (string) array_key_first($this->groups()), 'key' => $key, 'name' => $this->nameOf($key), 'state' => self::WAITING, 'caught' => null, 'note' => 'waiting', 'elapsed' => null], $this->firstGroup());
     }
 
     /**
@@ -131,21 +168,9 @@ final class ScanRules
         return collect($this->groups())->search(fn (array $tools): bool => in_array($key, $tools, true)) ?: self::OTHER;
     }
 
-    /**
-     * The groups with the tools Artisan Studio describes after the CLI's own.
-     *
-     * @return array<string, list<string>>
-     */
-    private function groups(): array
-    {
-        return collect($this->toolbox->defined())
-            ->filter(fn (DefinedTool $tool): bool => array_key_exists((string) $tool->group(), self::GROUPS))
-            ->reduce(fn (array $groups, DefinedTool $tool): array => [...$groups, (string) $tool->group() => [...$groups[(string) $tool->group()], $tool->key()]], self::GROUPS);
-    }
-
     private function position(string $key): int
     {
-        $group = array_search($this->groupOf($key), [...array_keys(self::GROUPS), self::OTHER], true);
+        $group = array_search($this->groupOf($key), [...array_keys($this->groups()), self::OTHER], true);
 
         return (int) $group * 100 + (int) (array_search($key, $this->groups()[$this->groupOf($key)] ?? [], true) ?: 0);
     }
