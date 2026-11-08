@@ -418,16 +418,19 @@ it('does not open the files again when it asks again after a fix, since they are
     Processes::assertRanTimes(fn ($process): bool => str_contains(implode(' ', (array) $process->command), 'phpstorm://open?file='), 3);
 });
 
-it('records the build\'s prototype in the app so it can be opened by its build, and tells the studio where the app is', function (): void {
-    config(['app.url' => 'https://shop.test']);
+it('records the build\'s prototype in the app so it can be opened by its build, and tells the studio where the app is and whether screenshots are sent', function (bool $sends): void {
+    config(['app.url' => 'https://shop.test', 'studio-cli.prototypes.send_screenshots' => $sends]);
     $this->plan['prototype_component'] = 'App\\Livewire\\Prototype\\CoverageReport';
     $ask = [...($this->ask)(), 'build' => '01a15b59-5b9b-70ad-8c19-b13a3c0393a5'];
 
     ($this->run)()->run($ask);
 
+    $told = collect(($this->sent)('SubmitScanWorkRequest'))->filter(fn (array $body): bool => isset($body['app_url']))->values();
+
     expect(json_decode((string) file_get_contents($this->root.'/storage/app/studio-cli/prototypes.json'), true))->toBe(['01a15b59-5b9b-70ad-8c19-b13a3c0393a5' => 'App\\Livewire\\Prototype\\CoverageReport'])
-        ->and(collect(($this->sent)('SubmitScanWorkRequest'))->pluck('app_url')->filter()->values()->all())->toBe(['https://shop.test']);
-});
+        ->and($told->pluck('app_url')->all())->toBe(['https://shop.test'])
+        ->and($told->pluck('screenshots')->all())->toBe([$sends]);
+})->with(['off' => false, 'on' => true]);
 
 it('looks at the prototype in a browser, has the studio say what is wrong with how it looks, and writes it again from that before the developer tries it', function (): void {
     file_put_contents($this->root.'/artisan', "<?php\necho json_encode(['path' => \$argv[2] ?? '', 'status' => 200, 'redirect' => null, 'error' => null, 'where' => null]);\n");

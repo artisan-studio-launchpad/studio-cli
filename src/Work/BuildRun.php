@@ -209,7 +209,7 @@ final class BuildRun
         $paths = array_merge([], ...array_map(fn (array $step): array => array_column($step['files'], 'path'), $steps));
         $this->progress->begin($this->session, self::JOB, $name, 'terminal', $this->branch, $paths);
         $this->studio->submitScanWork(['session' => $this->session, 'state' => 'running', 'branch' => $this->branch, 'from' => $this->from, 'refused' => null, 'batches' => []]);
-        preg_match('#^https?://[^\s/?\#]+(:\d+)?/?$#', (string) config('app.url')) === 1 && $this->studio->submitScanWork(['session' => $this->session, 'app_url' => (string) config('app.url')]);
+        preg_match('#^https?://[^\s/?\#]+(:\d+)?/?$#', (string) config('app.url')) === 1 && $this->studio->submitScanWork(['session' => $this->session, 'app_url' => (string) config('app.url'), 'screenshots' => config('studio-cli.prototypes.send_screenshots') === true]);
         $wireframe = $plan['wireframe_component'] ?? $plan['prototype_component'] ?? null;
         is_string($ask['build'] ?? null) && is_string($wireframe) && Prototypes::at($this->root)->remember($ask['build'], $wireframe);
         is_string($ask['build'] ?? null) && ($plan['wireframe_component'] ?? null) !== null && is_string($plan['prototype_component'] ?? null) && Prototypes::at($this->root)->remember($ask['build'], $plan['prototype_component'], Prototypes::PROTOTYPE);
