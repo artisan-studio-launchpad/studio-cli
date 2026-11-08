@@ -38,6 +38,15 @@ final class DefinedTool extends Tool
     public const string PACKAGE = '/^[a-z0-9]([_.-]?[a-z0-9]+)*\/[a-z0-9]([_.-]?[a-z0-9]+)*$/';
 
     /**
+     * Options that make a tool load and run a PHP file of the project's.
+     *
+     * @var list<string>
+     */
+    private const array LOADS_A_FILE = ['--bootstrap', '--configuration', '-c', '--autoload-file'];
+
+    private const string A_FILE = '/\.[A-Za-z][A-Za-z0-9]{0,7}$/';
+
+    /**
      * The only artisan commands a described tool may run: read-only checks.
      *
      * @var list<string>
@@ -93,21 +102,42 @@ final class DefinedTool extends Tool
     public static function isValid(array $definition): bool
     {
         $strings = fn (mixed $list, string $pattern): bool => is_array($list) && array_is_list($list) && collect($list)->every(fn (mixed $item): bool => is_string($item) && preg_match($pattern, $item) === 1 && ! str_contains($item, '..'));
+        $arguments = fn (mixed $list): bool => $strings($list, self::ARGUMENT) && collect($list)->every(self::isSafeArgument(...));
         $needs = (array) ($definition['needs'] ?? []);
         $lines = $definition['output']['lines'] ?? null;
 
         return is_string($definition['key'] ?? null) && preg_match(self::KEY, $definition['key']) === 1
             && is_string($definition['name'] ?? null)
             && is_string($definition['bin'] ?? null) && preg_match(self::BIN, $definition['bin']) === 1
-            && (! isset($definition['args']) || $strings($definition['args'], self::ARGUMENT))
-            && (! isset($definition['fix']) || $strings($definition['fix'], self::ARGUMENT))
+            && (! isset($definition['args']) || $arguments($definition['args']))
+            && (! isset($definition['fix']) || $arguments($definition['fix']))
             && $strings($needs['files'] ?? [], self::PATH)
             && $strings($needs['anyFile'] ?? [], self::PATH)
             && $strings($needs['folders'] ?? [], self::PATH)
             && $strings($needs['machine'] ?? [], self::BIN)
             && $strings($definition['reads'] ?? [], self::READ)
-            && (! is_string($definition['pathPrefix'] ?? null) || preg_match(self::ARGUMENT, $definition['pathPrefix']) === 1)
+            && (! is_string($definition['pathPrefix'] ?? null) || (preg_match(self::ARGUMENT, $definition['pathPrefix']) === 1 && self::isSafeArgument($definition['pathPrefix'])))
             && ($lines === null || (is_string($lines) && @preg_match($lines, '') !== false));
+    }
+
+    /**
+     * Whether a tool may be given this argument. It may not be told to load a
+     * PHP file of the project's as its bootstrap or configuration, and it may
+     * not be pointed at a file outside vendor/: a file there could have been
+     * written by the same studio that describes the tool.
+     */
+    public static function isSafeArgument(string $argument): bool
+    {
+        $name = str_contains($argument, '=') ? strstr($argument, '=', true) : $argument;
+        $value = str_contains($argument, '=') ? substr((string) strstr($argument, '='), 1) : $argument;
+
+        foreach (self::LOADS_A_FILE as $option) {
+            if (str_starts_with((string) $name, $option)) {
+                return false;
+            }
+        }
+
+        return preg_match(self::A_FILE, $value) !== 1 || str_starts_with($value, 'vendor/');
     }
 
     public function key(): string
