@@ -34,7 +34,7 @@ final class ProjectReads
      *
      * @var list<string>
      */
-    private const array WORKED_ON = ['css', 'scss', 'json', 'md', 'yml', 'yaml', 'xml', 'html', 'txt'];
+    private const array WORKED_ON = ['css', 'scss', 'json', 'md', 'yml', 'yaml', 'xml', 'html', 'txt', 'neon', 'dist'];
 
     /**
      * What a secret is called: an env file, Composer's auth file, a private
@@ -221,11 +221,21 @@ final class ProjectReads
     {
         $full = $this->root.'/'.$path;
 
-        return $this->isProjectPath($path)
-            && (in_array(pathinfo($path, PATHINFO_EXTENSION), [...self::EXTENSIONS, ...self::WORKED_ON], true) || in_array($path, self::NAMED, true))
-            && ! $this->isSkipped($path)
+        return $this->mayLeave($path)
             && is_file($full)
             && filesize($full) <= self::LARGEST_FILE;
+    }
+
+    /**
+     * Whether a file of this name may leave this machine, whether or not it is
+     * here: a path inside the project, of a kind the studio works on, that is
+     * not in a skipped folder and not named like a secret.
+     */
+    public function mayLeave(string $path): bool
+    {
+        return $this->isProjectPath($path)
+            && (in_array(pathinfo($path, PATHINFO_EXTENSION), [...self::EXTENSIONS, ...self::WORKED_ON], true) || in_array($path, self::NAMED, true))
+            && ! $this->isSkipped($path);
     }
 
     public function isProjectPath(string $path): bool
@@ -284,7 +294,10 @@ final class ProjectReads
             || preg_match(self::SECRET_NAME, $path) === 1;
     }
 
-    private function holdsSecret(string $text): bool
+    /**
+     * Whether this text holds something that looks like a key or token.
+     */
+    public function holdsSecret(string $text): bool
     {
         return collect(Secrets::KINDS)->contains(fn (array $kind): bool => preg_match($kind['pattern'], $text) === 1);
     }

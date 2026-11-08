@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ArtisanStudio\StudioCli\Scan\Tools;
 
 use ArtisanStudio\StudioCli\Scan\Load;
+use ArtisanStudio\StudioCli\Scan\ProjectReads;
 use ArtisanStudio\StudioCli\StateFile;
 use ArtisanStudio\StudioCli\Studio;
 use FilesystemIterator;
@@ -373,13 +374,20 @@ final class DefinedTool extends Tool
     }
 
     /**
+     * The config files the tool's description names, sent with its output so
+     * the studio can read it. Each goes through the one filter every file
+     * leaves by: one named like a secret, or holding a key or token, is left
+     * out and the studio reads the output without it.
+     *
      * @return array<string, string>
      */
     private function files(string $root): array
     {
+        $reads = new ProjectReads($root);
+
         return collect((array) ($this->definition['reads'] ?? []))
-            ->filter(fn (string $file): bool => is_file($root.'/'.$file) && filesize($root.'/'.$file) < 2_000_000)
-            ->mapWithKeys(fn (string $file): array => [$file => (string) file_get_contents($root.'/'.$file)])
+            ->mapWithKeys(fn (string $file): array => [$file => $reads->readable($file)])
+            ->filter(fn (?string $text): bool => $text !== null)
             ->all();
     }
 

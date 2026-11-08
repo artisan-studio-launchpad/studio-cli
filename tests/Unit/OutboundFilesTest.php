@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use ArtisanStudio\StudioCli\Fix\LocalBranch;
 use ArtisanStudio\StudioCli\Scan\ProjectReads;
+use ArtisanStudio\StudioCli\Scan\Tools\DefinedTool;
 use ArtisanStudio\StudioCli\Tests\Support\SecretLookingFiles;
 use Symfony\Component\Process\Process;
 
@@ -66,4 +67,18 @@ it('leaves the lines of an env file, a key file and a file holding a secret out 
 
     expect(collect($found['matches'])->map(fn (string $line): string => strstr($line, ':', true))->unique()->values()->all())->toBe(['app/Notes.php'])
         ->and(SecretLookingFiles::leaks(implode("\n", $found['matches'])))->toBeFalse();
+});
+
+it('sends a described tool\'s config files through the same filter, leaving out a secret by name and one holding a key', function (): void {
+    file_put_contents($this->root.'/auth.json', '{"github-oauth":{"github.com":"abc"}}');
+    file_put_contents($this->root.'/credentials.json', '{"key":"AKIAABCDEFGHIJKLMNOP"}');
+    file_put_contents($this->root.'/phpstan.neon', "parameters:\n    level: 5\n");
+    file_put_contents($this->root.'/pint.json', '{"preset":"laravel"}');
+    DefinedTool::keep($this->root, [['key' => 'house-check', 'name' => 'House check', 'bin' => 'house-check', 'reads' => ['auth.json', 'credentials.json', 'phpstan.neon', 'pint.json', 'missing.json']]]);
+    $tool = DefinedTool::all($this->root)[0];
+
+    $files = (new ReflectionMethod($tool, 'files'))->invoke($tool, $this->root);
+
+    expect(array_keys($files))->toBe(['phpstan.neon', 'pint.json'])
+        ->and(SecretLookingFiles::leaks(json_encode($files, JSON_THROW_ON_ERROR)))->toBeFalse();
 });
