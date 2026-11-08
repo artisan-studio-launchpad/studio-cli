@@ -87,13 +87,23 @@ final class LocalBranch
      * What is changed and not committed in these files, as one patch. A patch
      * too large to read back whole is no patch at all.
      *
+     * It is shown to the developer and sent with a question, so it goes
+     * through the one filter every file leaves by: the change to a file named
+     * like a secret, or whose patch holds a key or token, is left out of it,
+     * file by file.
+     *
      * @param  list<string>  $paths
      */
     public function patchOf(array $paths): string
     {
-        $patch = $paths === [] ? null : $this->git(['diff', '--no-color', '--no-ext-diff', '--unified=3', '--', ...$paths]);
+        $reads = new ProjectReads($this->root);
+        $patches = array_filter(array_map(
+            fn (string $path): string => $reads->mayLeave($path) ? (string) $this->git(['diff', '--no-color', '--no-ext-diff', '--unified=3', '--', $path]) : '',
+            $paths,
+        ), fn (string $patch): bool => $patch !== '' && ! $reads->holdsSecret($patch));
+        $patch = implode("\n", $patches);
 
-        return $patch === null || $patch === '' || strlen($patch) > self::LARGEST_PATCH * 2 ? '' : $patch."\n";
+        return $patch === '' || strlen($patch) > self::LARGEST_PATCH * 2 ? '' : $patch."\n";
     }
 
     /**

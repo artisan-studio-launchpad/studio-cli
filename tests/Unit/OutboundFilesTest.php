@@ -84,6 +84,22 @@ it('leaves the changes to an env file, a key file and a file holding a secret ou
         ->and(SecretLookingFiles::leaks(json_encode($branch->changesToSend($base), JSON_THROW_ON_ERROR)))->toBeFalse();
 });
 
+it('leaves the uncommitted change to an env file, a key file and a file holding a secret out of the patch it shows, file by file', function (): void {
+    foreach (['.env', 'keys/server.pem', 'app/Keys.php', 'app/Fine.php'] as $path) {
+        file_put_contents($this->root.'/'.$path, "\n// changed\n", FILE_APPEND);
+    }
+    $branch = new LocalBranch($this->root);
+
+    $patch = $branch->patchOf(['.env', 'keys/server.pem', 'app/Keys.php', 'app/Fine.php']);
+
+    expect($patch)->toContain('app/Fine.php')
+        ->and($patch)->not->toContain('app/Keys.php')
+        ->and($patch)->not->toContain('server.pem')
+        ->and(SecretLookingFiles::leaks($patch))->toBeFalse()
+        ->and($branch->patchOf(['.env', 'keys/server.pem', 'app/Keys.php']))->toBe('')
+        ->and($branch->patchOf([]))->toBe('');
+});
+
 it('sends a described tool\'s config files through the same filter, leaving out a secret by name and one holding a key', function (): void {
     file_put_contents($this->root.'/auth.json', '{"github-oauth":{"github.com":"abc"}}');
     file_put_contents($this->root.'/credentials.json', '{"key":"AKIAABCDEFGHIJKLMNOP"}');
