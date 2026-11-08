@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ArtisanStudio\StudioCli\Console;
 
+use ArtisanStudio\StudioCli\Scan\Tools\DefinedTool;
 use ArtisanStudio\StudioCli\Scan\Tools\Toolbox;
 use ArtisanStudio\StudioCli\Studio;
 use ArtisanStudio\StudioCli\TaskJournal;
@@ -91,9 +92,21 @@ class InstallToolsCommand extends Command
      */
     private function install(array $tool, TaskJournal $journal): bool
     {
-        $journal->note('Installing '.$tool['name'].': composer require --dev '.implode(' ', $tool['packages']).'.');
+        $command = self::composerCommand($tool['packages']);
 
-        $composer = new Process(['composer', 'require', '--dev', '--no-interaction', ...$tool['packages']], base_path(), timeout: self::TIMEOUT);
+        if ($command === null) {
+            $journal->note(__('studio-cli::tools.install.refused', ['tool' => $tool['name']]));
+
+            if (! $this->option('plain')) {
+                $this->components->error(__('studio-cli::tools.install.refused', ['tool' => $tool['name']]));
+            }
+
+            return false;
+        }
+
+        $journal->note('Installing '.$tool['name'].': '.implode(' ', $command).'.');
+
+        $composer = new Process($command, base_path(), timeout: self::TIMEOUT);
         $composer->run(fn (string $type, string $output) => $this->option('plain') ? null : $this->output->write($output));
 
         if (! $composer->isSuccessful()) {
@@ -115,6 +128,21 @@ class InstallToolsCommand extends Command
         $journal->note($added === [] ? $tool['name'].' is installed.' : $tool['name'].' is installed, with a starting '.implode(' and ', $added).'.');
 
         return true;
+    }
+
+    /**
+     * The one command that installs a tool: no Composer scripts and no
+     * plugins run, and nothing after `--` can be read as an option. Null when
+     * a name is not a plain vendor/name package.
+     *
+     * @param  list<string>  $packages
+     * @return list<string>|null
+     */
+    public static function composerCommand(array $packages): ?array
+    {
+        return DefinedTool::arePackages($packages)
+            ? ['composer', 'require', '--dev', '--no-interaction', '--no-scripts', '--no-plugins', '--', ...$packages]
+            : null;
     }
 
     private function outcome(string $line, int $code): int

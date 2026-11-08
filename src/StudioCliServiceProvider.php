@@ -133,6 +133,8 @@ class StudioCliServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        $this->loadTranslationsFrom(__DIR__.'/../lang', 'studio-cli');
+
         $this->servePrototypes();
 
         if (! $this->app->runningInConsole()) {

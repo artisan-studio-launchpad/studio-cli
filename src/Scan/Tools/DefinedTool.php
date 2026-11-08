@@ -32,6 +32,12 @@ final class DefinedTool extends Tool
     private const string ARGUMENT = '/^[A-Za-z0-9_.\/=:,@{}|-]{0,400}$/';
 
     /**
+     * A Composer package name and nothing else: vendor/name, which can never
+     * start with a dash, so it can never be read as an option.
+     */
+    public const string PACKAGE = '/^[a-z0-9]([_.-]?[a-z0-9]+)*\/[a-z0-9]([_.-]?[a-z0-9]+)*$/';
+
+    /**
      * The only artisan commands a described tool may run: read-only checks.
      *
      * @var list<string>
@@ -189,12 +195,27 @@ final class DefinedTool extends Tool
     public function install(): ?array
     {
         $install = $this->definition['install'] ?? null;
+        $packages = is_array($install) ? array_values((array) ($install['packages'] ?? [])) : [];
 
-        return is_array($install) ? [
-            'packages' => array_values(array_filter((array) ($install['packages'] ?? []), is_string(...))),
+        if (! is_array($install) || ($packages !== [] && ! self::arePackages($packages))) {
+            return null;
+        }
+
+        return [
+            'packages' => $packages,
             'files' => array_filter((array) ($install['files'] ?? []), fn (mixed $content, mixed $path): bool => is_string($content) && is_string($path) && preg_match(self::READ, $path) === 1, ARRAY_FILTER_USE_BOTH),
             'about' => (string) ($install['about'] ?? ''),
-        ] : null;
+        ];
+    }
+
+    /**
+     * Whether every package is a plain Composer package name.
+     *
+     * @param  list<string>  $packages
+     */
+    public static function arePackages(array $packages): bool
+    {
+        return $packages !== [] && collect($packages)->every(fn (mixed $package): bool => is_string($package) && preg_match(self::PACKAGE, $package) === 1);
     }
 
     public function summary(): ?array
