@@ -112,7 +112,7 @@ final class BridgeSetup
      */
     public function line(): string
     {
-        return __('studio-cli::bridge.cli.running').'   ⚡ '.__('studio-cli::bridge.cli.bridge.'.$this->gate->status());
+        return __('studio-cli::bridge.cli.running').'  │  🌉 '.__('studio-cli::bridge.cli.bridge.'.$this->gate->status());
     }
 
     public function lineColour(): string

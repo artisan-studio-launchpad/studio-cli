@@ -190,7 +190,7 @@ it('shows CLI running and where the bridge stands beside it: on, off, or needs a
     });
     app()->forgetInstance(BridgeSetup::class);
 
-    expect(($this->studio)()->getNotice())->toBe(__('studio-cli::bridge.cli.running').'   ⚡ '.__('studio-cli::bridge.cli.bridge.'.$status))
+    expect(($this->studio)()->getNotice())->toBe(__('studio-cli::bridge.cli.running').'  │  🌉 '.__('studio-cli::bridge.cli.bridge.'.$status))
         ->and(($this->studio)()->getNoticeColour())->toBe($colour);
 })->with([
     'on' => [BridgeGate::ON, 'green'],
