@@ -43,7 +43,7 @@ class BridgeCommand extends Command
             return self::FAILURE;
         }
 
-        $log = new BridgeLog(storage_path('studio/bridge'));
+        $log = new BridgeLog(storage_path('studio/bridge'), (bool) config('studio-cli.bridge.debug'));
 
         if ($this->hasSeveralWorkers()) {
             return $this->superviseWorkers($runner, $log);

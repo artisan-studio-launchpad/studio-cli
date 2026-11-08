@@ -330,4 +330,19 @@ return [
             'swap_seconds' => 0.08,
         ],
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | The AI bridge
+    |--------------------------------------------------------------------------
+    |
+    | `debug` keeps the prompt and instructions of every task in the bridge
+    | log, in storage/studio/bridge on this machine. Off, the log keeps only
+    | how big each task was, how long it took and what it cost.
+    |
+    */
+
+    'bridge' => [
+        'debug' => (bool) env('STUDIO_CLI_BRIDGE_DEBUG', false),
+    ],
 ];

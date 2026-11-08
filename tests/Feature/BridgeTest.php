@@ -109,7 +109,8 @@ it('runs Claude with no tools, no settings, no saved session, its own system pro
         ->and($ran['cwd'])->not->toBe(base_path());
 });
 
-it('writes every task it ran to a log the developer can read, prompt included', function (): void {
+it('writes every task it ran to a log the developer can read, and keeps the prompt out of it unless the debug option is on', function (bool $debug): void {
+    config(['studio-cli.bridge.debug' => $debug]);
     app()->instance(Shell::class, aMachineWith(['claude'], claudeAnswers($this->pong)));
     Saloon::fake([ClaimAiTaskRequest::class => aTask(), SubmitAiTaskRequest::class => MockResponse::make('', 204)]);
 
@@ -117,8 +118,11 @@ it('writes every task it ran to a log the developer can read, prompt included', 
 
     $line = json_decode(trim((string) File::get(collect(File::files($this->logs))->first()->getPathname())), true);
 
-    expect($line)->toMatchArray(['task' => '0199aaaa-bbbb-7ccc-8ddd-eeeeffff0000', 'runner' => 'claude', 'model' => 'haiku', 'ok' => true, 'prompt' => 'Reply with exactly: pong', 'instructions' => 'You answer in one word.']);
-});
+    expect($line)->toMatchArray(['task' => '0199aaaa-bbbb-7ccc-8ddd-eeeeffff0000', 'runner' => 'claude', 'model' => 'haiku', 'ok' => true, 'prompt_chars' => 24, 'instructions_chars' => 23])
+        ->and(array_key_exists('prompt', $line))->toBe($debug)
+        ->and(array_key_exists('instructions', $line))->toBe($debug);
+    $debug && expect($line)->toMatchArray(['prompt' => 'Reply with exactly: pong', 'instructions' => 'You answer in one word.']);
+})->with(['by default' => false, 'with debug on' => true]);
 
 it('reports Claude not being signed in as a plain failure, not a hang', function (): void {
     app()->instance(Shell::class, aMachineWith(['claude'], claudeAnswers(['exit' => 1, 'json' => ['is_error' => true, 'result' => 'Not logged in · Please run /login', 'usage' => []]])));
