@@ -18,6 +18,10 @@ class BridgeWorker
     ) {}
 
     /**
+     * The developer's yes covers the sign-in on this machine, and the account is
+     * shown when they give it and in Settings. It is not tied to one account, so
+     * a task runs under whichever account Claude Code is signed in as now.
+     *
      * @return array{id: string, ok: bool, ms: int, error: ?string, reported: bool}|null null when nothing was waiting
      */
     public function tick(): ?array
@@ -28,7 +32,6 @@ class BridgeWorker
             return null;
         }
 
-        // TODO: pause the bridge and ask again when the account Claude Code is signed in as is not the one the developer said yes for.
         $startedAt = microtime(true);
         $refused = Limits::unsigned($task, $this->studio->project(), array_values(array_filter((array) config('studio-cli.bridge.public_keys'), is_string(...))), time());
         $checked = $refused ?? Limits::check($task);

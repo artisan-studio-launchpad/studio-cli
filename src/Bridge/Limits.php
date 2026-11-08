@@ -14,7 +14,8 @@ namespace ArtisanStudio\StudioCli\Bridge;
  * id, kind, expiry and payload. This terminal holds the matching public key
  * and nothing that could sign. A task without a valid signature is refused.
  *
- * TODO before real use: give each task kind its own narrow tool list here.
+ * Only plain text tasks are accepted, and a runner gives them nothing on the
+ * project to use: no tools.
  */
 final class Limits
 {

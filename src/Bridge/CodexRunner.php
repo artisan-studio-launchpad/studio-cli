@@ -7,9 +7,11 @@ namespace ArtisanStudio\StudioCli\Bridge;
 /**
  * Runs a task through Codex, signed in on this machine.
  *
- * TODO before real use: only the not-signed-in path has been seen on a real
- * machine. Check the success output, the usage event and a model name end to
- * end once a signed-in Codex is at hand.
+ * Codex is not offered in this release (studio-cli.bridge.codex), so nothing
+ * reaches this runner unless a developer turns it on. The not-signed-in path
+ * has been run on a real machine; the success output, the usage event and the
+ * model name are covered by tests with stand-in output, not yet by a signed-in
+ * Codex.
  */
 final class CodexRunner implements Runner
 {
