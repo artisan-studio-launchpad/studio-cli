@@ -15,7 +15,7 @@ return [
 
     'consent' => [
         'label' => 'AI bridge through Claude Code',
-        'question' => 'Artisan Studio can run its AI tasks through your own Claude Code login, on this machine. It uses your subscription. Allow it?',
+        'question' => 'Artisan Studio can run its AI tasks on your Claude Code subscription. Allow it?',
         'yes' => 'Yes, allow it',
         'no' => 'No, keep it off',
         'allowed' => 'The AI bridge is on. Artisan Studio runs its AI tasks through your Claude Code login, on this machine.',
