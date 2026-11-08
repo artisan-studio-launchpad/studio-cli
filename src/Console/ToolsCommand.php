@@ -15,11 +15,6 @@ class ToolsCommand extends Command
 {
     public const string SIGNATURE = 'studio:tools';
 
-    /**
-     * @var list<string>
-     */
-    private const array HEAVY = ['phpstan', 'pest-type-coverage', 'pest-arch'];
-
     protected $signature = self::SIGNATURE.'
         {--json : Print what would be sent, and send nothing}
         {--plain : Print one plain line with the outcome}';
@@ -45,22 +40,12 @@ class ToolsCommand extends Command
         $checks = $wanted;
         $this->step($journal, 'Asked the studio which tools you switched on: '.($wanted === [] ? 'none' : implode(', ', $wanted)).'. They run at the same time.');
 
-        $heavy = array_values(array_intersect($checks, [...self::HEAVY, ...$toolbox->heavy()]));
         $status->running($checks);
         array_map(fn (string $key): mixed => $studio->reportToolProgress($key, 'waiting'), $checks);
 
         $commit = $this->commit();
-        $results = $this->ranTogether($toolbox, array_values(array_diff($checks, $heavy)), $journal, $studio, $status, $commit);
-        $waited = false;
-
-        while (self::waitsForTheTests($heavy) && $status->testsAreRunning()) {
-            $waited || $this->step($journal, 'Your tests are running, so the heavy checks wait for them. The rest are done.');
-            $waited = true;
-            sleep(2);
-        }
-
-        $results = [...$results, ...$this->ranTogether($toolbox, $heavy, $journal, $studio, $status, $commit)];
-        $payload = ['commit' => $commit, 'packages' => $toolbox->packages(), 'namespaces' => (object) $toolbox->namespaces(), 'tools' => $results];
+        $results = $this->ranTogether($toolbox, $checks, $journal, $studio, $status, $commit);
+        $payload = ['commit' => $commit, 'packages' => $toolbox->packages(), 'namespaces' => (object) $toolbox->namespaces(), 'phpstan_level' => $toolbox->phpstanLevel(), 'tools' => $results];
 
         if ($this->option('json')) {
             $this->line((string) json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
@@ -111,14 +96,6 @@ class ToolsCommand extends Command
             $status->started($key);
             $studio->reportToolProgress($key, 'running');
         });
-    }
-
-    /**
-     * @param  list<string>  $checks
-     */
-    public static function waitsForTheTests(array $checks): bool
-    {
-        return array_intersect($checks, [...self::HEAVY, ...(new Toolbox)->heavy()]) !== [];
     }
 
     private function commit(): ?string

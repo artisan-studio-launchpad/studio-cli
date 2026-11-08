@@ -4,9 +4,12 @@ declare(strict_types=1);
 
 namespace ArtisanStudio\StudioCli;
 
+use ArtisanStudio\StudioCli\Saloon\Requests\AuthorizeScanRequest;
+use ArtisanStudio\StudioCli\Saloon\Requests\ClaimAiTaskRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\FixScanFilesRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\ListPresenceStatesRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\ListProjectsRequest;
+use ArtisanStudio\StudioCli\Saloon\Requests\PickScanRulesRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\PingRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\PlanNodePatchesRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\ReadToolOutputRequest;
@@ -20,6 +23,7 @@ use ArtisanStudio\StudioCli\Saloon\Requests\ShowScanToolsRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\ShowScanWorkRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\ShowSnapshotRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\ShowSpeechRequest;
+use ArtisanStudio\StudioCli\Saloon\Requests\SubmitAiTaskRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\SubmitBlueprintRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\SubmitConventionFactsRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\SubmitRepoHistoryRequest;
@@ -57,6 +61,8 @@ class Studio
     private string $connection = self::UNKNOWN;
 
     private bool $hasConnected = false;
+
+    private ?string $failure = null;
 
     public function isLinked(): bool
     {
@@ -148,6 +154,32 @@ class Studio
     }
 
     /**
+     * The next piece of AI work the studio wants this machine to do, or none.
+     * Asking is also how the studio knows a terminal is listening.
+     *
+     * @return array{id: string, kind: string, payload: array<string, mixed>, lease_seconds: int}|null
+     */
+    public function claimAiTask(): ?array
+    {
+        $task = $this->quietly(new ClaimAiTaskRequest($this->project()))['task'] ?? null;
+
+        return is_array($task) && isset($task['id']) ? $task : null;
+    }
+
+    /**
+     * Hand the studio what the task came to: the answer and what it cost, or
+     * why it could not be done.
+     *
+     * @param  array<string, mixed>  $report
+     */
+    public function submitAiTask(string $task, array $report): bool
+    {
+        $response = rescue(fn () => $this->connector()->send(new SubmitAiTaskRequest($this->project(), $task, $report)), report: false);
+
+        return $response !== null && $response->successful();
+    }
+
+    /**
      * @return array{checks: array<string, array<string, mixed>>}|null
      */
     public function conventionDetectors(): ?array
@@ -226,6 +258,7 @@ class Studio
         is_string($answer['author'] ?? null) && config(['studio-cli.author' => $answer['author']]);
         is_array($answer['rector'] ?? null) && config(['studio-cli.rector' => $answer['rector']]);
         is_array($answer['added'] ?? null) && config(['studio-cli.added' => $answer['added']]);
+        is_array($answer['offered'] ?? null) && config(['studio-cli.offered' => array_values(array_filter($answer['offered'], is_string(...)))]);
 
         return is_array($answer['fixes'] ?? null) ? array_values(array_filter($answer['fixes'], is_string(...))) : null;
     }
@@ -312,6 +345,26 @@ class Studio
     }
 
     /**
+     * Tells the studio the developer started this scan from their own terminal,
+     * so the app moves on from its Authorize scan step.
+     */
+    public function authorizeScan(): void
+    {
+        $this->quietly(new AuthorizeScanRequest($this->project()));
+    }
+
+    /**
+     * Tells the studio which rules were run from this terminal, so the app
+     * begins the scan and keeps them as the rules picked.
+     *
+     * @param  list<string>  $tools
+     */
+    public function pickScanRules(array $tools): void
+    {
+        $this->quietly(new PickScanRulesRequest($this->project(), $tools));
+    }
+
+    /**
      * Tells the studio where a tool is, so the app can follow each rule as it
      * installs, runs and finishes. Nothing waits on the answer.
      */
@@ -352,9 +405,26 @@ class Studio
      */
     private function quietly(Request $request): ?array
     {
-        $response = rescue(fn () => $this->connector()->send($request), report: false);
+        $this->failure = null;
+        $response = rescue(fn () => $this->connector()->send($request), function (Throwable $error): null {
+            $this->failure = class_basename($error).': '.$error->getMessage();
+
+            return null;
+        }, report: false);
+
+        if ($response !== null && ! $response->successful()) {
+            $this->failure = 'HTTP '.$response->status().' '.substr(trim(strip_tags($response->body())), 0, 160);
+        }
 
         return $response !== null && $response->successful() ? $response->json() : null;
+    }
+
+    /**
+     * Why the last request got no answer, or null when it did.
+     */
+    public function lastFailure(): ?string
+    {
+        return $this->failure;
     }
 
     public function ping(?string $repository, bool $leaving = false): void

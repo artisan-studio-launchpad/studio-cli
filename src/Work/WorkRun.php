@@ -175,6 +175,24 @@ final class WorkRun
     private array $askedFor = [];
 
     /**
+     * The one request made at the start for the files of every kind, and which
+     * of its files a kind has taken.
+     *
+     * @var array{request: int, paths: list<string>, used: list<string>}|null
+     */
+    private ?array $prefetched = null;
+
+    private bool $prefetchingNow = false;
+
+    /**
+     * The tools that checked only the files a fix changed, so the end of the
+     * run checks the whole project with them once.
+     *
+     * @var array<string, true>
+     */
+    private array $checkedOnlyFiles = [];
+
+    /**
      * The files each file was sent with.
      *
      * @var array<string, list<string>>
@@ -275,7 +293,7 @@ final class WorkRun
     private function testsWritten(int $number, array $paths): array
     {
         $started = microtime(true);
-        $example = $this->tests?->example($paths[0]);
+        $example = $this->tests?->example($paths);
         $this->done[$number] = 0;
         $this->record($number, $paths, 'running', null, 0, 0, null);
         $this->proposed($number, array_map(fn (string $path): array => ['path' => $path], $paths), null, self::TESTS, $example);
@@ -471,7 +489,9 @@ final class WorkRun
         $this->say(sprintf('%s is %d %s on %s, %d %s of problem. I fix one kind at a time, every file of it at once, and commit each kind that passes its check. At the end I stop so you can try your app.', $name, count($paths), count($paths) === 1 ? 'file' : 'files', $this->branch, count($plan), count($plan) === 1 ? 'kind' : 'kinds'));
         array_map(fn (array $step, int $index) => $this->queued($index + 1, $step), $plan, array_keys($plan));
 
+        $this->startedEarly($plan);
         $stopped = collect($plan)->contains(fn (array $step, int $index): bool => ! $this->fixed($index + 1, count($plan), $step));
+        $this->finishedEarly();
 
         return $this->finish($name, $stopped, count($plan), $stopped ? null : $this->checkedOver(count($plan)));
     }
@@ -684,23 +704,53 @@ final class WorkRun
             ->all();
 
         $boot = $this->boots();
+        $knock = $this->knockedOn();
         $this->untested = $this->untested($paths);
 
-        if ($broken === [] && $boot === null) {
+        if ($broken === [] && $boot === null && $knock === []) {
             $this->say($this->overall($committed->all(), $planned, $broken, $boot, $this->untested, asking: false));
 
             return ['decision' => self::WORKS, 'note' => null];
         }
 
-        return $this->ask(0, $paths, $this->overall($committed->all(), $planned, $broken, $boot, $this->untested), '', ['kind' => 'final', 'options' => [self::WORKS, self::BROKE]]);
+        return $this->ask(0, $paths, $this->overall($committed->all(), $planned, $broken, $boot, $this->untested, knock: $knock), '', ['kind' => 'final', 'options' => [self::WORKS, self::BROKE]]);
+    }
+
+    /**
+     * Each fix was checked on its own files. Once, at the end, the whole
+     * project is checked with the same tools, because a fix in one file can
+     * break what calls it, and says what is reported now that was not before.
+     *
+     * @return list<string>
+     */
+    private function knockedOn(): array
+    {
+        $this->checkedOnlyFiles === [] || $this->step('Checking the whole project once with the same tools, in case a fix broke something that calls it…');
+
+        return array_values(array_filter(array_map(function (string $tool): string {
+            $whole = $this->checkTool($tool);
+
+            if (! $whole['ran']) {
+                return '';
+            }
+
+            $now = $whole['findings'] ?? [];
+            $before = array_map(fn (array $finding): string => self::fileOf($finding).'|'.$finding['rule'], $this->baseline[$tool] ?? []);
+            $added = array_values(array_filter($now, fn (array $finding): bool => ! in_array(self::fileOf($finding).'|'.$finding['rule'], $before, true)));
+            $this->baseline[$tool] = $now;
+            $this->kept()->keep($tool, $now);
+
+            return $added === [] ? '' : sprintf('After all the fixes the whole project check by %s also reports %s that it did not before.', $this->toolbox->name($tool), self::describe($added));
+        }, array_keys($this->checkedOnlyFiles))));
     }
 
     /**
      * @param  array<int, array<string, mixed>>  $committed
      * @param  array<string, string>  $broken
      * @param  list<string>  $untested
+     * @param  list<string>  $knock
      */
-    private function overall(array $committed, int $planned, array $broken, ?string $boot, array $untested, bool $asking = true): string
+    private function overall(array $committed, int $planned, array $broken, ?string $boot, array $untested, bool $asking = true, array $knock = []): string
     {
         $left = collect($this->batches)->whereIn('state', ['skipped', 'failed'])->pluck('rule');
 
@@ -710,6 +760,7 @@ final class WorkRun
                 $broken === [] && $boot === null => 'Every file I changed compiles'.(is_file($this->root.'/artisan') ? ', and your app still boots.' : '.'),
                 default => trim(($broken === [] ? '' : 'These files do not compile now: '.collect($broken)->map(fn (string $error, string $path): string => basename($path).' ('.$error.')')->implode('; ').'. ').($boot === null ? '' : 'Your app does not boot now: '.$boot)),
             },
+            $knock === [] ? '' : implode(' ', $knock),
             $asking ? 'Try your app on this branch, then tell me: does everything still work?' : 'You look over everything once, at the end, before the pull request.',
             $left->isEmpty() ? '' : 'Left for us to work through together: '.$left->implode('; ').'.',
             $this->leftAsItWas === [] ? '' : sprintf('I could not fix %s here. %s to Leftovers, where I try again with everything I learned.', implode(', ', array_map(basename(...), array_keys($this->leftAsItWas))), count($this->leftAsItWas) === 1 ? 'It moves' : 'They move'),
@@ -1044,6 +1095,34 @@ final class WorkRun
     private function proposed(int $number, array $files, ?string $failed, string $kind = self::FIXES, ?array $example = null, int $round = 1): void
     {
         $this->askedFor = [];
+        $early = $this->askedEarly(array_column($files, 'path'), $failed, $kind, $round);
+        $submitted = $early ?? $this->submitted($files, $failed, $kind, $example);
+
+        if ($submitted === null) {
+            return;
+        }
+
+        $this->streamed($number, $submitted['request'], $submitted['paths'], $kind === self::TESTS ? $this->placedTest(...) : $this->applyProposed(...), counts: $round === 1);
+        $early === null && $this->studio->submitScanWork(['session' => $this->session, 'propose' => ['id' => $submitted['request'], 'done' => true]]);
+        $again = array_values(array_filter($files, fn (array $file): bool => isset($this->askedFor[$file['path']])));
+
+        if ($kind !== self::FIXES || $this->job !== self::FAILING_TESTS || $again === [] || $round >= self::MOST_ROUNDS) {
+            return;
+        }
+
+        $this->say(sprintf('I need to see %s. Round %d of %d: %d %s again with %s…', collect($this->askedFor)->flatten()->unique()->implode(', '), $round + 1, self::MOST_ROUNDS, count($again), count($again) === 1 ? 'file' : 'files', count($this->askedFor) === 1 && count(reset($this->askedFor)) === 1 ? 'it' : 'them'));
+        $this->proposed($number, $again, $failed, $kind, null, $round + 1);
+    }
+
+    /**
+     * Sends the files to the studio to work on and says which request they
+     * went in, or null when none could go.
+     *
+     * @param  list<array{path: string}>  $files
+     * @return array{request: int, paths: list<string>}|null
+     */
+    private function submitted(array $files, ?string $failed, string $kind, ?array $example): ?array
+    {
         $paths = array_column($files, 'path');
         $tracked = array_values(array_filter($this->git->tracked($paths), fn (string $path): bool => is_file($this->root.'/'.$path)));
         $contents = array_combine($tracked, array_map(fn (string $path): string => (string) file_get_contents($this->root.'/'.$path), $tracked));
@@ -1053,10 +1132,11 @@ final class WorkRun
         $this->leftOut(array_keys(array_diff_key($contents, $fits)), 'is too big for me to work on, so I left it as it was.');
 
         if ($sent === []) {
-            return;
+            return null;
         }
 
         $request = random_int(1, 2_000_000_000);
+        $this->prefetchingNow || $this->prefetched = null;
         $parts = $this->parts($sent);
         $related = $kind === self::FIXES ? $this->dependedOn($fits) : [];
         $this->step(sprintf($kind === self::TESTS ? 'Writing tests for %d %s at once…' : 'Fixing %d %s at once…', count($sent), count($sent) === 1 ? 'file' : 'files'));
@@ -1075,19 +1155,66 @@ final class WorkRun
         if (in_array(null, $taken, true)) {
             $this->leftOut(array_column($sent, 'path'), 'is as it was: the studio would not take the work.');
 
+            return null;
+        }
+
+        return ['request' => $request, 'paths' => array_column($sent, 'path')];
+    }
+
+    /**
+     * Starts the studio on the files of every kind at the start, so the kinds
+     * that come after the first find their proposals already made. Only files
+     * no earlier kind touches, so none is worked on before it has changed.
+     *
+     * @param  list<array{files: list<array{path: string}>}>  $plan
+     */
+    private function startedEarly(array $plan): void
+    {
+        $this->prefetched = null;
+
+        if (count($plan) < 2 || $this->job === self::FAILING_TESTS) {
             return;
         }
 
-        $this->streamed($number, $request, array_column($sent, 'path'), $kind === self::TESTS ? $this->placedTest(...) : $this->applyProposed(...), counts: $round === 1);
-        $this->studio->submitScanWork(['session' => $this->session, 'propose' => ['id' => $request, 'done' => true]]);
-        $again = array_values(array_filter($files, fn (array $file): bool => isset($this->askedFor[$file['path']])));
+        $taken = [];
+        $files = collect($plan)->flatMap(function (array $step) use (&$taken): array {
+            $own = array_values(array_filter($step['files'], fn (array $file): bool => ! in_array($file['path'], $taken, true)));
+            $taken = [...$taken, ...array_column($step['files'], 'path')];
 
-        if ($kind !== self::FIXES || $this->job !== self::FAILING_TESTS || $again === [] || $round >= self::MOST_ROUNDS) {
-            return;
+            return $own;
+        })->unique('path')->values()->all();
+
+        $this->prefetchingNow = true;
+        $submitted = $this->submitted($files, null, self::FIXES, null);
+        $this->prefetchingNow = false;
+
+        $this->prefetched = $submitted === null ? null : ['request' => $submitted['request'], 'paths' => $submitted['paths'], 'used' => []];
+    }
+
+    /**
+     * The request already made for these files, when one covers them and none
+     * of them has been changed since it was made.
+     *
+     * @param  list<string>  $paths
+     * @return array{request: int, paths: list<string>}|null
+     */
+    private function askedEarly(array $paths, ?string $failed, string $kind, int $round): ?array
+    {
+        $early = $this->prefetched;
+
+        if ($early === null || $failed !== null || $kind !== self::FIXES || $round !== 1 || $paths === [] || array_diff($paths, $early['paths']) !== [] || array_intersect($paths, $early['used']) !== []) {
+            return null;
         }
 
-        $this->say(sprintf('I need to see %s. Round %d of %d: %d %s again with %s…', collect($this->askedFor)->flatten()->unique()->implode(', '), $round + 1, self::MOST_ROUNDS, count($again), count($again) === 1 ? 'file' : 'files', count($this->askedFor) === 1 && count(reset($this->askedFor)) === 1 ? 'it' : 'them'));
-        $this->proposed($number, $again, $failed, $kind, null, $round + 1);
+        $this->prefetched['used'] = [...$early['used'], ...$paths];
+
+        return ['request' => $early['request'], 'paths' => $paths];
+    }
+
+    private function finishedEarly(): void
+    {
+        $this->prefetched === null || $this->studio->submitScanWork(['session' => $this->session, 'propose' => ['id' => $this->prefetched['request'], 'done' => true]]);
+        $this->prefetched = null;
     }
 
     /**
@@ -1235,9 +1362,10 @@ final class WorkRun
      */
     private function verify(array $paths, array $tools): array
     {
+        $started = $this->testsStarted($paths);
         $results = array_combine($tools, array_map(fn (string $tool): array => $this->standing($tool, $this->checkedAgain($tool, $paths)), $tools));
 
-        return $this->verdictOf($paths, $tools, $results, $this->broken($paths));
+        return $this->verdictOf($paths, $tools, $results, $this->broken($paths, $started));
     }
 
     /**
@@ -1360,17 +1488,17 @@ final class WorkRun
      * @param  list<string>  $paths
      * @return list<string>
      */
-    private function broken(array $paths): array
+    private function broken(array $paths, ?array $started = null): array
     {
-        $covering = $this->retesting ?? $this->tests?->for($paths) ?? [];
+        $covering = $started['covering'] ?? $this->retesting ?? $this->tests?->for($paths) ?? [];
         $this->tested = $this->retesting === null ? 0 : $this->tested;
 
         if ($covering === []) {
             return [];
         }
 
-        $this->step(sprintf('Running the %d %s these files.', count($covering), count($covering) === 1 ? 'test file that covers' : 'test files that cover'));
-        $failing = $this->tests?->failing($covering);
+        $started === null && $this->step(sprintf('Running the %d %s these files.', count($covering), count($covering) === 1 ? 'test file that covers' : 'test files that cover'));
+        $failing = $started === null ? $this->tests?->failing($covering) : ($started['finish'])();
 
         if ($failing === null) {
             $this->step('Your tests could not run, so my check of these files is the tools alone.');
@@ -1381,6 +1509,26 @@ final class WorkRun
         $this->tested = $this->retesting === null ? count($covering) : $this->tested;
 
         return $failing === [] ? [] : array_values(array_diff($failing, $this->failingBefore($paths, $failing)));
+    }
+
+    /**
+     * Starts the tests that cover a change while its tools check it, so the
+     * two are waited for together and not one after the other.
+     *
+     * @param  list<string>  $paths
+     * @return array{covering: list<string>, finish: Closure(): ?list<string>}|null
+     */
+    private function testsStarted(array $paths): ?array
+    {
+        $covering = $this->retesting ?? $this->tests?->for($paths) ?? [];
+
+        if ($covering === [] || $this->tests === null) {
+            return null;
+        }
+
+        $this->step(sprintf('Running the %d %s these files.', count($covering), count($covering) === 1 ? 'test file that covers' : 'test files that cover'));
+
+        return ['covering' => $covering, 'finish' => $this->tests->failingLater($covering)];
     }
 
     /**
@@ -1688,7 +1836,10 @@ final class WorkRun
     private function checkedAgain(string $tool, array $paths): array
     {
         if ($tool !== Tests::KEY) {
-            return $this->checkTool($tool);
+            $scoped = $this->toolbox->checksOnlyTheFilesAsked($tool);
+            $scoped && $this->checkedOnlyFiles[$tool] = true;
+
+            return $this->checkTool($tool, $scoped ? $paths : []);
         }
 
         $tests = $this->testFilesFor($paths);

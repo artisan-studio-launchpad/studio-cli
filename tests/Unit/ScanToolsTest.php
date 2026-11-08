@@ -12,6 +12,7 @@ use ArtisanStudio\StudioCli\Scan\Tools\PhpStan;
 use ArtisanStudio\StudioCli\Scan\Tools\Pint;
 use ArtisanStudio\StudioCli\Scan\Tools\Rector;
 use ArtisanStudio\StudioCli\Scan\Tools\Tests;
+use ArtisanStudio\StudioCli\Scan\Tools\Tool;
 use ArtisanStudio\StudioCli\Scan\Tools\Toolbox;
 use ArtisanStudio\StudioCli\Scan\Tools\TypeCoverage;
 use ArtisanStudio\StudioCli\Studio;
@@ -54,11 +55,50 @@ it('runs Pint in parallel only when the project\'s Pint offers it', function (st
     file_put_contents($this->root.'/vendor/bin/pint', "#!/bin/sh\necho '".$help."'\n");
     chmod($this->root.'/vendor/bin/pint', 0755);
 
-    expect((new Pint)->command($this->root))->toBe($command);
+    $config = '--config='.sys_get_temp_dir().'/studio-pint/'.hash('xxh128', $this->root).'.json';
+
+    expect((new Pint)->command($this->root))->toBe(array_map(fn (string $argument): string => $argument === '--config' ? $config : $argument, $command));
 })->with([
-    'a Pint with parallel runs' => ['  -p, --parallel  Runs the linter in parallel', ['vendor/bin/pint', '--test', '--format=json', '-v', '--parallel']],
-    'an older Pint' => ['  --test  Test for code style errors without fixing them', ['vendor/bin/pint', '--test', '--format=json', '-v']],
+    'a Pint with parallel runs' => ['  -p, --parallel  Runs the linter in parallel', ['vendor/bin/pint', '--test', '--format=json', '-v', '--config', '--parallel']],
+    'an older Pint' => ['  --test  Test for code style errors without fixing them', ['vendor/bin/pint', '--test', '--format=json', '-v', '--config']],
 ]);
+
+it('runs Pint again without its parallel workers when one of them times out, instead of giving the whole fix up', function (): void {
+    mkdir($this->root.'/vendor/bin', 0755, true);
+    file_put_contents($this->root.'/vendor/bin/pint', <<<'SH'
+        #!/bin/sh
+        case "$*" in
+          *--help*) echo '  -p, --parallel  Runs the linter in parallel' ;;
+          *--parallel*) echo 'Child process timed out after 120 seconds. Try making it longer using ParallelConfig.' >&2; exit 1 ;;
+          *) touch ran-serially ;;
+        esac
+        SH);
+    chmod($this->root.'/vendor/bin/pint', 0755);
+
+    $result = (new Toolbox($this->root))->fix('pint');
+
+    expect($result['ran'])->toBeTrue()
+        ->and(is_file($this->root.'/ran-serially'))->toBeTrue();
+});
+
+it('does not run Pint again when the parallel run failed for another reason', function (): void {
+    mkdir($this->root.'/vendor/bin', 0755, true);
+    file_put_contents($this->root.'/vendor/bin/pint', <<<'SH'
+        #!/bin/sh
+        case "$*" in
+          *--help*) echo '  -p, --parallel  Runs the linter in parallel' ;;
+          *--parallel*) echo 'Syntax error in app/Broken.php' >&2; exit 1 ;;
+          *) touch ran-serially ;;
+        esac
+        SH);
+    chmod($this->root.'/vendor/bin/pint', 0755);
+
+    $result = (new Toolbox($this->root))->fix('pint');
+
+    expect($result['ran'])->toBeFalse()
+        ->and($result['reason'])->toContain('Syntax error')
+        ->and(is_file($this->root.'/ran-serially'))->toBeFalse();
+});
 
 it('never drops a file Pint fails, even when its JSON names the file but not the rules', function (): void {
     $plain = json_encode(['about' => 'PHP CS Fixer', 'files' => [['name' => 'app/Policies/UserPolicy.php'], ['name' => 'app/Jobs/KeyAvatarVideo.php']]]);
@@ -147,6 +187,29 @@ it('reads Pest\'s type coverage report as the untyped declarations, by file and 
         ->and((new TypeCoverage)->command(sys_get_temp_dir()))->toBeNull();
 });
 
+it('finds the file inside the project when Pest reports a path from somewhere else, such as a cache from before the project was copied', function (): void {
+    mkdir($this->root.'/vendor/bin', 0755, true);
+    mkdir($this->root.'/'.TypeCoverage::PLUGIN, 0755, true);
+    mkdir($this->root.'/app/Models', 0755, true);
+    touch($this->root.'/vendor/bin/pest');
+    touch($this->root.'/app/Models/Order.php');
+    $coverage = new TypeCoverage;
+    $command = $coverage->command($this->root);
+    $report = substr((string) end($command), strlen('--type-coverage-json='));
+
+    file_put_contents($report, (string) json_encode(['format' => 'pest', 'coverage-min' => 0, 'result' => [
+        ['file' => '/Volumes/Other/Projects/shop/app/Models/Order.php', 'uncoveredLines' => ['pa12'], 'uncoveredLinesIgnored' => [], 'percentage' => 90],
+        ['file' => '/Volumes/Other/Projects/shop/app/Models/Gone.php', 'uncoveredLines' => ['pa3'], 'uncoveredLinesIgnored' => [], 'percentage' => 90],
+        ['file' => $this->root.'/app/Models/Order.php', 'uncoveredLines' => ['rt5'], 'uncoveredLinesIgnored' => [], 'percentage' => 90],
+    ], 'total' => 90]));
+
+    expect(array_column($coverage->findings('', $this->root), 'where'))->toBe([
+        'app/Models/Order.php:12',
+        'Volumes/Other/Projects/shop/app/Models/Gone.php:3',
+        'app/Models/Order.php:5',
+    ]);
+});
+
 it('runs Pest\'s arch presets from a git-ignored test file it removes after, as one finding per broken preset', function (): void {
     mkdir($this->root.'/vendor/bin', 0755, true);
     mkdir($this->root.'/'.PestArch::PLUGIN, 0755, true);
@@ -222,6 +285,20 @@ it('measures code coverage in the same test run when asked, and lists the files 
         'summary' => ['coverage' => 58],
     ])
         ->and((new Tests)->command($this->root))->not->toContain('--coverage-clover');
+});
+
+it('sends the whole of a PHPStan message that is too long for one line, beside the cut one', function (): void {
+    $long = 'Parameter #1 $row of method App\Order::total() expects array{'.implode(', ', array_map(fn (int $key): string => 'key'.$key.': string', range(1, 120))).'}, array{id: int} given.';
+    $output = json_encode(['totals' => ['errors' => 0, 'file_errors' => 2], 'files' => [
+        $this->root.'/app/Order.php' => ['errors' => 2, 'messages' => [['message' => $long, 'line' => 5, 'identifier' => 'argument.type'], ['message' => 'Undefined variable: $tax', 'line' => 9, 'identifier' => 'variable.undefined']]],
+    ], 'errors' => []]);
+
+    [$cut, $short] = (new PhpStan)->findings((string) $output, $this->root);
+
+    expect(mb_strlen($cut['message']))->toBe(Tool::LONGEST_MESSAGE)
+        ->and($cut['message'])->toEndWith('…')
+        ->and($cut['detail'])->toBe($long)
+        ->and($short)->not->toHaveKey('detail');
 });
 
 it('knows what each missing tool needs before it offers to install it', function (): void {
@@ -369,8 +446,68 @@ it('leaves PHPStan out until the project says what to analyse in a phpstan.neon'
 
     touch($this->root.'/phpstan.neon.dist');
 
-    expect((new PhpStan)->command($this->root))->toBe(['vendor/bin/phpstan', 'analyse', '--error-format=json', '--no-progress', '--no-interaction', '--memory-limit=2G']);
+    $command = (new PhpStan)->command($this->root);
+
+    expect($command)->toContain('vendor/bin/phpstan', 'analyse', '--error-format=json', '--no-progress', '--no-interaction', '--memory-limit=2G');
 });
+
+it('keeps PHPStan\'s cache out of the project, so a scan leaves no thousands of PHP files for Pint and Rector to read', function (): void {
+    mkdir($this->root.'/vendor/bin', 0755, true);
+    touch($this->root.'/vendor/bin/phpstan');
+    file_put_contents($this->root.'/phpstan.neon', "parameters:\n    level: max\n    tmpDir: tmp/phpstan\n");
+
+    $command = (new PhpStan)->command($this->root);
+    $given = collect($command)->first(fn (string $argument): bool => str_starts_with($argument, '--configuration='));
+    $neon = (string) file_get_contents(substr((string) $given, strlen('--configuration=')));
+
+    expect($given)->not->toBeNull()
+        ->and($neon)->toContain("includes:\n    - '".$this->root.'/phpstan.neon\'')
+        ->and($neon)->toContain('tmpDir: \''.sys_get_temp_dir().'/studio-phpstan/')
+        ->and($neon)->not->toContain($this->root.'/tmp');
+});
+
+it('scans every project at the highest PHPStan level whatever its own config says, through its own config and without touching it', function (string $level): void {
+    mkdir($this->root.'/vendor/bin', 0755, true);
+    touch($this->root.'/vendor/bin/phpstan');
+    $own = "includes:\n    - phpstan-baseline.neon\n\nparameters:\n    level: {$level}\n";
+    file_put_contents($this->root.'/phpstan.neon', $own);
+    file_put_contents($this->root.'/phpstan-baseline.neon', "parameters:\n    ignoreErrors: []\n");
+
+    $command = (new PhpStan)->command($this->root);
+    $neon = (string) file_get_contents(substr((string) collect($command)->first(fn (string $argument): bool => str_starts_with($argument, '--configuration=')), strlen('--configuration=')));
+
+    expect($command)->toContain('--level=max')
+        ->and($neon)->toContain("includes:\n    - '".$this->root."/phpstan.neon'")->toContain('level: max')->toContain('reportUnmatchedIgnoredErrors: false')
+        ->and((string) file_get_contents($this->root.'/phpstan.neon'))->toBe($own);
+})->with(['0', '3', '5', 'max']);
+
+it('reads the PHPStan level from a file the config includes, the last one winning', function (): void {
+    file_put_contents($this->root.'/phpstan.neon', "includes:\n    - one.neon\n    - two.neon # level\n");
+    file_put_contents($this->root.'/one.neon', "parameters:\n    level: 4\n");
+    file_put_contents($this->root.'/two.neon', "parameters:\n    level: 9\n");
+
+    expect((new Toolbox($this->root))->phpstanLevel())->toBe('9');
+});
+
+it('has Larastan read casts() only where the project says nothing about it, and never touches the project\'s file', function (string $config, string $larastan, bool $injected): void {
+    mkdir($this->root.'/vendor/bin', 0755, true);
+    mkdir($this->root.'/vendor/larastan/larastan', 0755, true);
+    touch($this->root.'/vendor/bin/phpstan');
+    file_put_contents($this->root.'/vendor/larastan/larastan/extension.neon', $larastan);
+    file_put_contents($this->root.'/phpstan.neon', $config);
+
+    $command = (new PhpStan)->command($this->root);
+    $neon = (string) file_get_contents(substr((string) collect($command)->first(fn (string $argument): bool => str_starts_with($argument, '--configuration=')), strlen('--configuration=')));
+
+    expect(str_contains($neon, 'parseModelCastsMethod: true'))->toBe($injected)
+        ->and((string) file_get_contents($this->root.'/phpstan.neon'))->toBe($config);
+})->with([
+    'nothing said' => ["includes:\n    - vendor/larastan/larastan/extension.neon\n\nparameters:\n    level: 5\n", "parameters:\n    parseModelCastsMethod: false\n", true],
+    'said yes' => ["includes:\n    - vendor/larastan/larastan/extension.neon\n\nparameters:\n    level: 5\n    parseModelCastsMethod: true\n", "parameters:\n    parseModelCastsMethod: false\n", false],
+    'said no' => ["includes:\n    - vendor/larastan/larastan/extension.neon\n\nparameters:\n    level: 5\n    parseModelCastsMethod: false\n", "parameters:\n    parseModelCastsMethod: false\n", false],
+    'a Larastan that does not know the option' => ["includes:\n    - vendor/larastan/larastan/extension.neon\n\nparameters:\n    level: 5\n", "parameters:\n    checkModelProperties: true\n", false],
+    'no Larastan in the config' => ["parameters:\n    level: 5\n", "parameters:\n    parseModelCastsMethod: false\n", false],
+]);
 
 it('says when each tool starts and when it is done, one at a time, so the studio can follow them', function (): void {
     $seen = [];
@@ -445,4 +582,45 @@ it('stops a slow test suite after five minutes unless the published config says 
     config(['studio-cli.tests.timeout_minutes' => 0]);
 
     expect($tests->timeout())->toBe(60);
+});
+
+it('checks with Pint again without its parallel workers when one of them times out, instead of reporting it did not run', function (): void {
+    mkdir($this->root.'/vendor/bin', 0755, true);
+    file_put_contents($this->root.'/vendor/bin/pint', <<<'SH'
+        #!/bin/sh
+        case "$*" in
+          *--help*) echo '  -p, --parallel  Runs the linter in parallel' ;;
+          *--parallel*) echo 'Child process timed out after 120 seconds. Try making it longer using ParallelConfig.' >&2; exit 1 ;;
+          *) echo '{"result":"passed","files":[]}' ;;
+        esac
+        SH);
+    chmod($this->root.'/vendor/bin/pint', 0755);
+
+    $result = (new Toolbox($this->root))->run(['pint'])['pint'];
+
+    expect($result['ran'])->toBeTrue()
+        ->and($result['findings'])->toBe([]);
+});
+
+it('has Pint skip the project\'s tmp folder without touching the project\'s own pint.json', function (): void {
+    mkdir($this->root.'/vendor/bin', 0755, true);
+    file_put_contents($this->root.'/vendor/bin/pint', "#!/bin/sh\necho ''\n");
+    chmod($this->root.'/vendor/bin/pint', 0755);
+    file_put_contents($this->root.'/pint.json', json_encode(['preset' => 'laravel', 'exclude' => ['build']]));
+
+    $argument = collect((new Pint)->fixCommand($this->root))->first(fn (string $part): bool => str_starts_with($part, '--config='));
+    $written = json_decode((string) file_get_contents(substr((string) $argument, 9)), true);
+
+    expect($written)->toBe(['preset' => 'laravel', 'exclude' => ['build', 'tmp']])
+        ->and(json_decode((string) file_get_contents($this->root.'/pint.json'), true)['exclude'])->toBe(['build']);
+});
+
+it('has Pint skip tmp even when the project has no pint.json', function (): void {
+    mkdir($this->root.'/vendor/bin', 0755, true);
+    file_put_contents($this->root.'/vendor/bin/pint', "#!/bin/sh\necho ''\n");
+    chmod($this->root.'/vendor/bin/pint', 0755);
+
+    $argument = collect((new Pint)->serialCommand($this->root))->first(fn (string $part): bool => str_starts_with($part, '--config='));
+
+    expect(json_decode((string) file_get_contents(substr((string) $argument, 9)), true))->toBe(['exclude' => ['tmp']]);
 });

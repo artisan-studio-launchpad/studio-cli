@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace ArtisanStudio\StudioCli;
 
+use ArtisanStudio\StudioCli\Bridge\BridgeKeeper;
 use ArtisanStudio\StudioCli\Console\AvatarSyncCommand;
 use ArtisanStudio\StudioCli\Console\BlueprintCommand;
+use ArtisanStudio\StudioCli\Console\BridgeCommand;
 use ArtisanStudio\StudioCli\Console\BuildCommand;
 use ArtisanStudio\StudioCli\Console\BuildPresenceCommand;
 use ArtisanStudio\StudioCli\Console\CheckCommand;
@@ -14,6 +16,7 @@ use ArtisanStudio\StudioCli\Console\DashboardCommand;
 use ArtisanStudio\StudioCli\Console\FixCommand;
 use ArtisanStudio\StudioCli\Console\HistoryCommand;
 use ArtisanStudio\StudioCli\Console\InsightsCommand;
+use ArtisanStudio\StudioCli\Console\InsightsFixCommand;
 use ArtisanStudio\StudioCli\Console\InstallToolsCommand;
 use ArtisanStudio\StudioCli\Console\PhpStanCommand;
 use ArtisanStudio\StudioCli\Console\RenderCommand;
@@ -29,6 +32,7 @@ use ArtisanStudio\StudioCli\Dashboard\SnapshotSource;
 use ArtisanStudio\StudioCli\Events\StudioReported;
 use ArtisanStudio\StudioCli\Fix\FixLauncher;
 use ArtisanStudio\StudioCli\Fix\FixProgress;
+use ArtisanStudio\StudioCli\Fix\FixTimeline;
 use ArtisanStudio\StudioCli\History\FeatureCommits;
 use ArtisanStudio\StudioCli\Prototype\PrototypeController;
 use ArtisanStudio\StudioCli\Prototype\PrototypeShot;
@@ -75,14 +79,18 @@ class StudioCliServiceProvider extends ServiceProvider
 
         $this->app->singleton(TestSuite::class, fn (): TestSuite => new TestSuite($this->app->basePath()));
 
+        $this->app->singleton(BridgeKeeper::class);
+
         $this->app->singleton(Blueprint::class, fn (): Blueprint => new Blueprint(
             $this->app->path(),
             $this->app->getNamespace(),
             $this->app->make(ModelInspector::class),
-            Blueprint::rootsOf($this->app->basePath()),
+            Blueprint::rootsOf($this->app->basePath(), Blueprint::ownerOf($this->app->make(LocalChanges::class)->originRepository())),
         ));
 
         $this->app->singleton(FeatureCommits::class, fn (): FeatureCommits => new FeatureCommits($this->app->basePath()));
+
+        $this->app->singleton(FixTimeline::class, fn (): FixTimeline => new FixTimeline($this->app->basePath()));
 
         $this->app->singleton(Walk::class, fn (): Walk => new Walk($this->app->basePath(), $this->app->make(LocalChanges::class)));
 
@@ -134,6 +142,7 @@ class StudioCliServiceProvider extends ServiceProvider
         $this->commands([
             AvatarSyncCommand::class,
             BlueprintCommand::class,
+            BridgeCommand::class,
             BuildCommand::class,
             BuildPresenceCommand::class,
             ConventionsCommand::class,
@@ -141,6 +150,7 @@ class StudioCliServiceProvider extends ServiceProvider
             HistoryCommand::class,
             FixCommand::class,
             InsightsCommand::class,
+            InsightsFixCommand::class,
             InstallToolsCommand::class,
             PhpStanCommand::class,
             SettingsCommand::class,

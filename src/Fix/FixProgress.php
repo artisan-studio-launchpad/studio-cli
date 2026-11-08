@@ -54,12 +54,13 @@ final class FixProgress
      * What the studio is told while a run works: its phase and each rule's state and counts.
      *
      * @param  array<string, mixed>  $progress
-     * @return array{phase: string, rulesets: array<string, array{state: string, found: int, fixed: int, left: ?int}>, files: list<array{path: string, fixed: int}>}
+     * @return array{phase: string, step: string, rulesets: array<string, array{state: string, found: int, fixed: int, left: ?int}>, files: list<array{path: string, fixed: int}>}
      */
     public static function live(array $progress): array
     {
         return [
             'phase' => (string) ($progress['phase'] ?? self::FIXING),
+            'step' => (string) ($progress['step'] ?? ''),
             'rulesets' => array_map(fn (mixed $ruleset): array => [
                 'state' => (string) ($ruleset['state'] ?? self::WAITING),
                 'found' => (int) ($ruleset['found'] ?? 0),
@@ -102,9 +103,20 @@ final class FixProgress
      *
      * @param  list<string>  $keys
      */
-    public function refused(string $reason, array $keys = []): void
+    public function refused(string $reason, array $keys = [], bool $untilClean = false): void
     {
-        $this->write(['phase' => self::REFUSED, 'branch' => '', 'at' => microtime(true), 'reason' => $reason, 'rulesets' => array_fill_keys($keys, ['state' => self::WAITING, 'found' => 0, 'fixed' => 0, 'files' => 0])]);
+        $this->write(['phase' => self::REFUSED, 'branch' => '', 'at' => microtime(true), 'reason' => $reason, 'until_clean' => $untilClean, 'rulesets' => array_fill_keys($keys, ['state' => self::WAITING, 'found' => 0, 'fixed' => 0, 'files' => 0])]);
+    }
+
+    /**
+     * Whether the run was refused only for uncommitted changes, so it starts
+     * by itself the moment the developer has dealt with them.
+     */
+    public function waitsForCleanBranch(): bool
+    {
+        $json = $this->raw();
+
+        return ($json['phase'] ?? null) === self::REFUSED && ($json['until_clean'] ?? false) === true;
     }
 
     /**
@@ -159,6 +171,15 @@ final class FixProgress
                 ->all(),
             'files' => [...(array) ($progress['files'] ?? []), ...$files],
         ]);
+    }
+
+    /**
+     * What the run is doing now, in a few words, for the city's "SAMI is fixing" pill: the tools
+     * after the fixing itself (tidying, Rector, committing) would otherwise leave it silent.
+     */
+    public function stepping(string $line): void
+    {
+        $this->change(fn (array $progress): array => [...$progress, 'step' => $line]);
     }
 
     /**

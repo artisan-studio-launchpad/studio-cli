@@ -140,3 +140,20 @@ it('says so when the studio does not take it', function (): void {
         ->expectsOutputToContain('The studio did not take the history')
         ->assertFailed();
 });
+
+it('reads what a CHANGELOG lists when the commit messages are messy, so the project still has what it built', function (): void {
+    $root = repoWith([['stuff', ''], ['more stuff', ''], ['wip', '']]);
+    file_put_contents($root.'/CHANGELOG.md', "# Changelog\n\n## [1.1.0] - 2026-09-01\n\n### Added\n- Invoices can be exported as CSV (#12)\n- Customers pay by card\n\n### Fixed\n- Totals round correctly\n\n## [1.0.0] - 2026-08-01\n\n### Added\n- Reminders for late invoices\n");
+
+    $read = (new FeatureCommits($root))->read();
+
+    expect($read['conventional'])->toBeTrue()
+        ->and(array_column($read['commits'], 'subject'))->toBe(['Invoices can be exported as CSV', 'Customers pay by card', 'Reminders for late invoices'])
+        ->and($read['commits'][0]['committed_at'])->toStartWith('2026-09-01');
+});
+
+it('reports a messy history with no changelog as unusable', function (): void {
+    $read = (new FeatureCommits(repoWith([['stuff', ''], ['more stuff', ''], ['wip', '']])))->read();
+
+    expect($read['conventional'])->toBeFalse()->and($read['commits'])->toBe([]);
+});

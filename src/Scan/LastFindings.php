@@ -9,9 +9,14 @@ use ArtisanStudio\StudioCli\StateFile;
 use Symfony\Component\Process\Process;
 
 /**
- * Everything each tool found in the last scan, kept on this machine with the
- * commit it read, so fixing can start from it instead of checking again. Kept
- * only for a clean working tree, since the lines must be the committed ones.
+ * Everything each tool found in the last scan, kept on this machine so fixing
+ * can start from it instead of checking again.
+ *
+ * Each tool's findings are kept with the commit it read, when the working tree
+ * was clean, and with a fingerprint of every file it flagged. A finding still
+ * stands where nothing has changed in its file, whatever happened to the
+ * commits since: a scan taken before the developer committed, or a history
+ * that was rewritten, costs nothing but the files that really changed.
  */
 final class LastFindings
 {
@@ -26,45 +31,86 @@ final class LastFindings
      */
     public function keep(string $key, array $findings): void
     {
-        $commit = $this->cleanCommit();
-
-        if ($commit === null) {
-            return;
-        }
-
         $kept = $this->all();
-        $tools = ($kept['commit'] ?? null) === $commit ? ($kept['tools'] ?? []) : [];
 
         @file_put_contents($this->path(), (string) json_encode([
-            'commit' => $commit,
-            'tools' => [...$tools, $key => $findings],
+            ...$kept,
+            'tools' => [...($kept['tools'] ?? []), $key => $findings],
+            'commits' => [...($kept['commits'] ?? []), $key => $this->cleanCommit()],
+            'hashes' => [...($kept['hashes'] ?? []), $key => $this->fingerprints($findings)],
         ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), LOCK_EX);
     }
 
     /**
-     * What the tool found at this commit. Found at an earlier commit, it
-     * still stands for every file nothing has changed since, so a commit
-     * after the scan costs only the findings in the files it touched.
+     * What the tool found that still stands. Found at this commit, all of it.
+     * Found at an earlier commit behind this one, what is in the files nothing
+     * has changed since. Found anywhere else, what is in the files that are
+     * exactly as the scan read them. Null when none of it can be trusted.
      *
      * @return list<array{where: string, rule: string, message: string}>|null
      */
     public function for(string $key): ?array
     {
         $kept = $this->all();
-        $commit = $this->cleanCommit();
         $findings = $kept['tools'][$key] ?? null;
 
-        if ($commit === null || $findings === null || ! isset($kept['commit'])) {
+        if ($findings === null) {
             return null;
         }
 
-        if ($kept['commit'] === $commit) {
-            return $findings;
+        $at = array_key_exists($key, (array) ($kept['commits'] ?? [])) ? $kept['commits'][$key] : ($kept['commit'] ?? null);
+        $commit = $this->cleanCommit();
+
+        if ($commit !== null && $at !== null) {
+            $changed = $at === $commit ? [] : $this->changedSince($at);
+
+            if ($changed !== null) {
+                return array_values(array_filter($findings, fn (array $finding): bool => ! isset($changed[self::fileOf($finding)])));
+            }
         }
 
-        $changed = $this->changedSince($kept['commit']);
+        return $this->unchanged($findings, (array) ($kept['hashes'][$key] ?? []));
+    }
 
-        return $changed === null ? null : array_values(array_filter($findings, fn (array $finding): bool => ! isset($changed[(string) preg_replace('/:\d+$/', '', $finding['where'])])));
+    /**
+     * @param  list<array{where: string, rule: string, message: string}>  $findings
+     * @param  array<string, string>  $fingerprints
+     * @return list<array{where: string, rule: string, message: string}>|null
+     */
+    private function unchanged(array $findings, array $fingerprints): ?array
+    {
+        $standing = array_values(array_filter($findings, fn (array $finding): bool => ($fingerprints[self::fileOf($finding)] ?? null) !== null && $fingerprints[self::fileOf($finding)] === $this->fingerprint(self::fileOf($finding))));
+
+        return $standing === [] ? null : $standing;
+    }
+
+    /**
+     * @param  list<array{where: string, rule: string, message: string}>  $findings
+     * @return array<string, string>
+     */
+    private function fingerprints(array $findings): array
+    {
+        return collect($findings)
+            ->map(fn (array $finding): string => self::fileOf($finding))
+            ->unique()
+            ->mapWithKeys(fn (string $path): array => [$path => $this->fingerprint($path)])
+            ->filter()
+            ->all();
+    }
+
+    private function fingerprint(string $path): ?string
+    {
+        $file = $this->root.'/'.$path;
+
+        return $path !== '' && ! str_contains($path, '..') && is_file($file) ? (string) @hash_file('xxh128', $file) : null;
+    }
+
+    /**
+     * @param  array{where: string}  $finding
+     */
+    private static function fileOf(array $finding): string
+    {
+        return (string) preg_replace('/:\d+$/', '', $finding['where']);
     }
 
     /**
@@ -87,7 +133,9 @@ final class LastFindings
 
     public function commit(): ?string
     {
-        return $this->all()['commit'] ?? null;
+        $kept = $this->all();
+
+        return collect((array) ($kept['commits'] ?? []))->filter()->last() ?? ($kept['commit'] ?? null);
     }
 
     public function forget(): void
@@ -101,7 +149,7 @@ final class LastFindings
     }
 
     /**
-     * @return array{commit?: string, tools?: array<string, list<array{where: string, rule: string, message: string}>>}
+     * @return array{commit?: string, tools?: array<string, list<array{where: string, rule: string, message: string}>>, commits?: array<string, string|null>, hashes?: array<string, array<string, string>>}
      */
     private function all(): array
     {

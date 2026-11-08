@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ArtisanStudio\StudioCli;
 
 use Composer\Autoload\ClassLoader;
+use Composer\InstalledVersions;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\ModelInspector;
 use Illuminate\Support\Collection;
@@ -31,12 +32,21 @@ class Blueprint
     ) {}
 
     /**
-     * Every PSR-4 root the project itself declares, wherever it lives: the app,
-     * and the modules, packages and domains a larger project splits into.
+     * Every PSR-4 root that is the project's own code, wherever it lives: the
+     * app, the modules and domains a larger project splits into, and the
+     * packages published by whoever owns the project.
      *
+     * A package is theirs when its composer vendor is the owner of the
+     * project's repository. That reaches a package symlinked in from a sibling
+     * folder as well as one installed into vendor, and leaves every package
+     * somebody else published alone, however it was installed: their models
+     * are not part of this project's blueprint.
+     *
+     * @param  array<string, string>|null  $packages  package name => install path, from Composer when omitted
+     * @param  list<ClassLoader>|null  $loaders  Composer's loaders when omitted
      * @return array<string, list<string>>
      */
-    public static function rootsOf(string $basePath): array
+    public static function rootsOf(string $basePath, ?string $owner = null, ?array $packages = null, ?array $loaders = null): array
     {
         $base = realpath($basePath);
 
@@ -44,14 +54,60 @@ class Blueprint
             return [];
         }
 
-        return collect(ClassLoader::getRegisteredLoaders())
+        $owned = self::packagesOwnedBy($owner, $packages);
+
+        return collect($loaders ?? ClassLoader::getRegisteredLoaders())
             ->flatMap(fn (ClassLoader $loader): array => $loader->getPrefixesPsr4())
             ->map(fn (array $directories): array => collect($directories)
                 ->map(fn (string $directory): string|false => realpath($directory))
-                ->filter(fn (string|false $directory): bool => $directory !== false && str_starts_with($directory, $base.DIRECTORY_SEPARATOR) && ! self::isNotTheirCode(substr($directory, strlen($base) + 1)))
+                ->filter(fn (string|false $directory): bool => $directory !== false && (self::isInsideProject($directory, $base) || self::isInside($directory, $owned)))
                 ->values()
                 ->all())
             ->filter()
+            ->all();
+    }
+
+    /**
+     * The owner of the repository the project was cloned from: the user or
+     * organisation in `owner/repo`.
+     */
+    public static function ownerOf(?string $originRepository): ?string
+    {
+        return $originRepository !== null && str_contains($originRepository, '/') ? Str::before($originRepository, '/') : null;
+    }
+
+    private static function isInsideProject(string $directory, string $base): bool
+    {
+        return str_starts_with($directory, $base.DIRECTORY_SEPARATOR) && ! self::isNotTheirCode(substr($directory, strlen($base) + 1));
+    }
+
+    /**
+     * @param  list<string>  $packagePaths
+     */
+    private static function isInside(string $directory, array $packagePaths): bool
+    {
+        return collect($packagePaths)->contains(fn (string $path): bool => str_starts_with($directory, $path.DIRECTORY_SEPARATOR) && ! self::isNotTheirCode(substr($directory, strlen($path) + 1)));
+    }
+
+    /**
+     * @param  array<string, string>|null  $packages
+     * @return list<string>
+     */
+    private static function packagesOwnedBy(?string $owner, ?array $packages): array
+    {
+        if ($owner === null || $owner === '') {
+            return [];
+        }
+
+        $packages ??= collect(InstalledVersions::getInstalledPackages())
+            ->mapWithKeys(fn (string $name): array => [$name => (string) InstalledVersions::getInstallPath($name)])
+            ->all();
+
+        return collect($packages)
+            ->filter(fn (string $path, string $name): bool => strcasecmp(Str::before($name, '/'), $owner) === 0)
+            ->map(fn (string $path): string|false => realpath($path))
+            ->filter()
+            ->values()
             ->all();
     }
 

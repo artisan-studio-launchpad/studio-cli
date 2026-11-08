@@ -20,9 +20,12 @@ use ArtisanStudio\StudioCli\Tests\Fixtures\Blueprint\Models\InvoiceStatus;
 use ArtisanStudio\StudioCli\Tests\Fixtures\BlueprintModules\Shop\Order;
 use ArtisanStudio\StudioCli\Work\WorkLauncher;
 use ArtisanStudio\StudioCli\Work\WorkProgress;
+use Composer\Autoload\ClassLoader;
 use Illuminate\Database\Eloquent\ModelInspector;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\File;
+use Illuminate\Support\Str;
 use Saloon\Http\Faking\MockResponse;
 use Saloon\Http\PendingRequest;
 use Saloon\Laravel\Facades\Saloon;
@@ -73,6 +76,40 @@ it('takes the PSR-4 roots inside the project, and leaves out vendor code, tests,
         ->and(Blueprint::rootsOf('/no/such/folder'))->toBe([]);
 });
 
+it('takes the packages its owner published, wherever they are installed, and nobody else\'s', function (): void {
+    $folder = sys_get_temp_dir().'/'.Str::uuid();
+    $project = $folder.'/project';
+
+    foreach (['mine/src', 'mine/tests', 'mine/database/factories', 'theirs/src', 'project/app'] as $directory) {
+        mkdir($folder.'/'.$directory, recursive: true);
+    }
+
+    $loader = new ClassLoader;
+    $loader->addPsr4('Mine\\Billing\\', $folder.'/mine/src');
+    $loader->addPsr4('Mine\\Billing\\Tests\\', $folder.'/mine/tests');
+    $loader->addPsr4('Mine\\Billing\\Database\\Factories\\', $folder.'/mine/database/factories');
+    $loader->addPsr4('Theirs\\Lib\\', $folder.'/theirs/src');
+
+    $packages = ['acme/billing' => $folder.'/mine', 'other/lib' => $folder.'/theirs'];
+
+    $mine = Blueprint::rootsOf($project, 'acme', $packages, [$loader]);
+    $shouting = Blueprint::rootsOf($project, 'ACME', $packages, [$loader]);
+    $nobody = Blueprint::rootsOf($project, null, $packages, [$loader]);
+
+    File::deleteDirectory($folder);
+
+    expect(array_keys($mine))->toBe(['Mine\\Billing\\'])
+        ->and($mine['Mine\\Billing\\'])->toHaveCount(1)
+        ->and($mine['Mine\\Billing\\'][0])->toEndWith('/mine/src')
+        ->and(array_keys($shouting))->toBe(['Mine\\Billing\\'])
+        ->and($nobody)->toBe([]);
+});
+
+it('knows the owner of a project from the repository it was cloned from', function (): void {
+    expect(Blueprint::ownerOf('artisan-studio-launchpad/studio-platform'))->toBe('artisan-studio-launchpad')
+        ->and(Blueprint::ownerOf('studio-platform'))->toBeNull()
+        ->and(Blueprint::ownerOf(null))->toBeNull();
+});
 it('maps names, the database\'s own column types, enum casts and relationships, and leaves out a model it cannot read', function (): void {
     $mapped = $this->blueprint->map();
     $shapes = array_map(fn (array $model): array => [

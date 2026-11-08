@@ -96,7 +96,7 @@ final class AutomatedFixes
      * it has nothing for are checked now, all at the same time.
      *
      * @param  list<string>  $keys
-     * @return array{findings: array<string, list<array{where: string, rule: string, message: string}>>, checked: list<string>, failed: array<string, string>}
+     * @return array{findings: array<string, list<array{where: string, rule: string, message: string}>>, checked: list<string>, failed: array<string, string>, results: array<string, array<string, mixed>>, kept: array<string, list<array{where: string, rule: string, message: string}>>}
      */
     public function findings(array $keys): array
     {
@@ -112,6 +112,8 @@ final class AutomatedFixes
             'findings' => collect($found)->map(fn (array $findings, string $key): array => [...$findings, ...(self::added()[$key] ?? [])])->all(),
             'checked' => $missing,
             'failed' => array_map(fn (array $result): string => $result['reason'] ?? 'It did not run.', array_filter($checked, fn (array $result): bool => ! $result['ran'])),
+            'results' => $checked,
+            'kept' => $scanned,
         ];
     }
 
@@ -150,11 +152,11 @@ final class AutomatedFixes
      *
      * @param  array<string, list<array{where: string, rule: string, message: string}>>  $findings
      * @param  (callable(string, string): void)|null  $onFixed  told the rule and the file of each fix as its batch comes back
-     * @return array{kinds: array<string, array<string, int>>, files: array<string, int>, saved: list<string>, fixed: array<string, list<array{where: string, rule: string, message: string}>>, swept: list<array{where: string, rule: string, message: string}>, failed: int, requests: int, sent: int}
+     * @return array{kinds: array<string, array<string, int>>, files: array<string, int>, saved: list<string>, fixed: array<string, list<array{where: string, rule: string, message: string}>>, swept: list<array{where: string, rule: string, message: string}>, failed: int, requests: int, sent: int, timings: array{ms: int, parsing_ms: int, phases: array<string, int>, rules: list<array<string, mixed>>, fixers: list<array<string, mixed>>}}
      */
-    public function fileByFile(array $findings, ?callable $onFixed = null): array
+    public function fileByFile(array $findings, ?callable $onFixed = null, ?callable $onEvent = null): array
     {
-        $made = (new StudioFixes($this->root, $this->studio ?? app(Studio::class)))->fix($findings, isset($findings[self::ARCH]), $onFixed);
+        $made = (new StudioFixes($this->root, $this->studio ?? app(Studio::class)))->fix($findings, isset($findings[self::ARCH]), $onFixed, $onEvent);
         $saved = $made['saved'];
         $fixed = collect($made['fixed'])->filter(fn (array $fix): bool => in_array($fix['path'], $saved, true))->values();
         $keys = $saved === [] ? [] : array_values(array_unique($fixed->pluck('key')->all()));
@@ -169,6 +171,7 @@ final class AutomatedFixes
             'failed' => $made['failed'],
             'requests' => $made['requests'],
             'sent' => $made['sent'],
+            'timings' => $made['timings'],
         ];
     }
 

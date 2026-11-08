@@ -26,14 +26,56 @@ class Pint extends Tool
             return null;
         }
 
-        return [$bin, '--test', '--format=json', '-v', ...($this->offers($root, [$bin, '--help'], '--parallel') ? ['--parallel'] : [])];
+        return [$bin, '--test', '--format=json', '-v', ...$this->configuration($root), ...($this->offers($root, [$bin, '--help'], '--parallel') ? ['--parallel'] : [])];
     }
 
     public function fixCommand(string $root): ?array
     {
         $bin = $this->bin($root, 'pint');
 
-        return $bin === null ? null : [$bin, ...($this->offers($root, [$bin, '--help'], '--parallel') ? ['--parallel'] : [])];
+        return $bin === null ? null : [$bin, ...$this->configuration($root), ...($this->offers($root, [$bin, '--help'], '--parallel') ? ['--parallel'] : [])];
+    }
+
+    public function serialFixCommand(string $root): ?array
+    {
+        $bin = $this->bin($root, 'pint');
+
+        return $bin === null ? null : [$bin, ...$this->configuration($root)];
+    }
+
+    public function serialCommand(string $root): ?array
+    {
+        $bin = $this->bin($root, 'pint');
+
+        return $bin === null ? null : [$bin, '--test', '--format=json', '-v', ...$this->configuration($root)];
+    }
+
+    /**
+     * Pint formats every PHP file under the project, and a project keeps PHP files in its tmp
+     * folder that are not its code (PHPStan's cache is thousands of them), so Pint is slow and
+     * reports files nobody wrote. This is the project's own pint.json with tmp added to what
+     * it skips, written to the system's temp folder so no developer has to edit their config.
+     *
+     * @return list<string>
+     */
+    private function configuration(string $root): array
+    {
+        $own = $root.'/pint.json';
+        $config = is_file($own) ? json_decode((string) file_get_contents($own), true) : [];
+
+        if (! is_array($config)) {
+            return [];
+        }
+
+        $config['exclude'] = array_values(array_unique([...array_map('strval', (array) ($config['exclude'] ?? [])), 'tmp']));
+        $folder = sys_get_temp_dir().'/studio-pint';
+        $file = $folder.'/'.hash('xxh128', $root).'.json';
+
+        if (! is_dir($folder) && ! @mkdir($folder, 0700, true) && ! is_dir($folder)) {
+            return [];
+        }
+
+        return @file_put_contents($file, json_encode($config, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)) === false ? [] : ['--config='.$file];
     }
 
     public function canFix(string $root): bool

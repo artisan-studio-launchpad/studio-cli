@@ -58,6 +58,38 @@ it('counts every rule\'s fixes by kind from what the studio sent back, only in f
         ->and(is_file($this->root.'/app/Gone.php'))->toBeFalse();
 });
 
+it('keeps a scan taken with changes not yet committed, and trusts it for the files nothing has touched since, whatever happened to the commits', function (): void {
+    $git = fn (string ...$arguments): string => (string) (new Process(['git', ...$arguments], $this->root))->mustRun()->getOutput();
+    $git('init', '--quiet');
+    ($this->write)('app/A.php', "<?php\n// a\n");
+    ($this->write)('app/B.php', "<?php\n// b\n");
+    $git('add', '.');
+    $git('-c', 'user.email=avatar@example.com', '-c', 'user.name=Avatar', 'commit', '--quiet', '-m', 'start');
+    ($this->write)('app/C.php', "<?php\n");
+    $git('add', 'app/C.php');
+
+    $kept = new LastFindings($this->root);
+    $kept->keep('pest-type-coverage', [
+        ['where' => 'app/A.php:2', 'rule' => 'constant', 'message' => 'x'],
+        ['where' => 'app/B.php:2', 'rule' => 'constant', 'message' => 'y'],
+    ]);
+
+    $git('-c', 'user.email=avatar@example.com', '-c', 'user.name=Avatar', 'commit', '--quiet', '-m', 'saved what was in progress');
+    ($this->write)('app/B.php', "<?php\n// b changed\n");
+    $git('add', 'app/B.php');
+    $git('-c', 'user.email=avatar@example.com', '-c', 'user.name=Avatar', 'commit', '--quiet', '--amend', '-m', 'one rewritten commit');
+
+    expect((new LastFindings($this->root))->for('pest-type-coverage'))->toBe([['where' => 'app/A.php:2', 'rule' => 'constant', 'message' => 'x']]);
+
+    ($this->write)('app/A.php', "<?php\n// a changed\n");
+    $git('add', 'app/A.php');
+    $git('-c', 'user.email=avatar@example.com', '-c', 'user.name=Avatar', 'commit', '--quiet', '--amend', '--no-edit');
+
+    expect((new LastFindings($this->root))->for('pest-type-coverage'))->toBeNull();
+
+    $kept->forget();
+});
+
 it('starts from what the last scan kept for this commit, and checks only what it has nothing for', function (): void {
     $git = fn (string ...$arguments): string => (string) (new Process(['git', ...$arguments], $this->root))->mustRun()->getOutput();
     $git('init', '--quiet');

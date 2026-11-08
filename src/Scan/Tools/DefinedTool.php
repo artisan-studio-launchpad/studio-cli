@@ -120,7 +120,7 @@ final class DefinedTool extends Tool
     }
 
     /**
-     * Whether it reads every file, so it waits for the tests.
+     * Whether it reads every file.
      */
     public function isHeavy(): bool
     {

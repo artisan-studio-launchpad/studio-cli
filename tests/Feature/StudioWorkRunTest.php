@@ -11,35 +11,13 @@ use ArtisanStudio\StudioCli\Scan\LastFindings;
 use ArtisanStudio\StudioCli\Scan\Tools\Toolbox;
 use ArtisanStudio\StudioCli\Studio;
 use ArtisanStudio\StudioCli\TaskJournal;
+use ArtisanStudio\StudioCli\Tests\Support\FakeTestRunner;
 use ArtisanStudio\StudioCli\Work\TestRunner;
 use ArtisanStudio\StudioCli\Work\WorkProgress;
 use ArtisanStudio\StudioCli\Work\WorkRun;
 use Saloon\Http\Faking\MockResponse;
 use Saloon\Laravel\Facades\Saloon;
 use Symfony\Component\Process\Process;
-
-abstract class FakeTestRunner implements TestRunner
-{
-    public function for(array $paths): array
-    {
-        return [];
-    }
-
-    public function example(string $path): ?array
-    {
-        return null;
-    }
-
-    public function failing(array $tests): ?array
-    {
-        return [];
-    }
-
-    public function failures(array $tests): ?array
-    {
-        return [];
-    }
-}
 
 /*
 |--------------------------------------------------------------------------
@@ -227,7 +205,8 @@ it('commits each kind that passes without asking, and says what it did once, aft
 
     expect(collect($work)->filter(fn (array $report): bool => isset($report['question']))->pluck('question.kind')->all())->toBe([])
         ->and($this->checks)->toBe(3)
-        ->and(($this->asked)())->toHaveCount(2)
+        ->and(($this->asked)())->toHaveCount(1)
+        ->and(array_column(($this->asked)()[0]['files'], 'path'))->toBe(array_map(fn (int $n): string => "app/F{$n}.php", range(1, 7)))
         ->and($batches)->toHaveCount(2)
         ->and(collect($batches)->pluck('state')->unique()->all())->toBe(['committed'])
         ->and(collect($batches)->pluck('rule')->all())->toBe(['Alpha', 'Beta'])
@@ -562,7 +541,7 @@ it('writes a test for each file it is asked to and commits them all without runn
     {
         public array $ran = [];
 
-        public function example(string $path): ?array
+        public function example(array $paths): ?array
         {
             return ['path' => 'tests/Feature/ExampleTest.php', 'content' => (string) file_get_contents($this->where.'/tests/Feature/ExampleTest.php')];
         }
@@ -909,4 +888,31 @@ it('tells the studio why a branch could not be sent when the send stops on this 
     expect($bodies[0]['send'])->toMatchArray(['id' => 4])
         ->and($bodies[0]['send']['failed'])->toContain('it stopped on this machine')
         ->and($said)->toContain('could not be sent');
+});
+
+it('checks each fix on its own files, then the whole project once at the end, and says what the fixes broke elsewhere', function (): void {
+    $scopes = [];
+    $wholeRuns = 0;
+    $this->tool = function (string $tool, array $paths = []) use (&$scopes, &$wholeRuns): array {
+        $scopes[] = $paths;
+        $paths === [] && $wholeRuns++;
+        $own = collect(glob($this->root.'/app/*.php') ?: [])
+            ->flatMap(fn (string $file): array => collect(explode("\n", (string) file_get_contents($file)))
+                ->filter(fn (string $line): bool => str_contains($line, 'TODO_FIX'))
+                ->map(fn (string $line, int $index): array => ['where' => 'app/'.basename($file).':'.($index + 1), 'rule' => 'todo', 'message' => 'Fix me.'])
+                ->values()
+                ->all())
+            ->values()
+            ->all();
+
+        return ['ran' => true, 'findings' => [...$own, ...($paths === [] && $wholeRuns > 1 ? [['where' => 'app/Caller.php:3', 'rule' => 'broken-call', 'message' => 'Calls a method that changed.']] : [])]];
+    };
+    $ask = [...($this->ask)(2), 'files' => array_map(fn (int $n): array => ['path' => "app/F{$n}.php", 'findings' => [['tool' => 'studio-security', 'rule' => 'todo', 'line' => 2, 'title' => 'Fix me.']]], range(1, 2))];
+
+    ($this->run)()->run($ask);
+    $said = collect(($this->sent)('SubmitScanWorkRequest'))->pluck('said')->filter()->implode("\n");
+
+    expect($scopes)->toContain(['app/F1.php', 'app/F2.php'])
+        ->and(end($scopes))->toBe([])
+        ->and($said)->toContain('After all the fixes the whole project check by Studio Scan & Fix also reports 1 new finding (app/Caller.php:3 [broken-call]');
 });

@@ -35,6 +35,27 @@ abstract class Tool
         return null;
     }
 
+    /**
+     * The same fixing run without its parallel workers, for a project too big or a machine too busy
+     * for them: a worker that takes longer than its limit ends the whole parallel run.
+     *
+     * @return list<string>|null
+     */
+    public function serialFixCommand(string $root): ?array
+    {
+        return null;
+    }
+
+    /**
+     * The same checking run without its parallel workers, for when one of them times out.
+     *
+     * @return list<string>|null
+     */
+    public function serialCommand(string $root): ?array
+    {
+        return null;
+    }
+
     public function canFix(string $root): bool
     {
         return $this->fixCommand($root) !== null;
@@ -49,6 +70,15 @@ abstract class Tool
     public function pathArguments(array $paths): array
     {
         return $paths;
+    }
+
+    /**
+     * Whether the check can look at only the files a change touched, with
+     * the same answer for them as a check of the whole project.
+     */
+    public function checksOnlyTheFilesAsked(): bool
+    {
+        return false;
     }
 
     /**
@@ -138,11 +168,26 @@ abstract class Tool
         return is_array($decoded) ? $decoded : null;
     }
 
+    /**
+     * The path inside the project. A tool can report an absolute path from
+     * somewhere else, such as Pest's cache after the project was copied or
+     * moved, or the same folder under a symlink: then it is the longest tail
+     * of that path that is a file here.
+     */
     protected function relative(string $path, string $root): string
     {
         $root = rtrim($root, '/').'/';
 
-        return ltrim(str_starts_with($path, $root) ? substr($path, strlen($root)) : $path, '/');
+        if (str_starts_with($path, $root)) {
+            return ltrim(substr($path, strlen($root)), '/');
+        }
+
+        $parts = explode('/', ltrim($path, '/'));
+        $inside = $path === ltrim($path, '/') ? null : collect(array_keys($parts))
+            ->map(fn (int $from): string => implode('/', array_slice($parts, $from)))
+            ->first(fn (string $tail): bool => is_file($root.$tail));
+
+        return $inside ?? ltrim($path, '/');
     }
 
     /**

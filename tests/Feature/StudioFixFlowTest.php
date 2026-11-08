@@ -253,6 +253,20 @@ it('says why it could not start, and offers to try again', function (): void {
         ->toContain('press ⏎ to start');
 });
 
+it('waits for a clean branch only when uncommitted changes were why it was refused', function (): void {
+    $this->progress->refused('You have uncommitted changes.', ['pint'], untilClean: true);
+
+    expect($this->progress->waitsForCleanBranch())->toBeTrue();
+
+    $this->progress->refused('This project is not a git repository.', ['pint']);
+
+    expect($this->progress->waitsForCleanBranch())->toBeFalse();
+
+    $this->progress->forget();
+
+    expect($this->progress->waitsForCleanBranch())->toBeFalse();
+});
+
 it('says the run stopped when its process has gone, rather than spinning for ever', function (): void {
     $this->progress->begin('studio/fixes-2026-10-06-1900', ['rector', 'node-audit'], []);
     $this->progress->running(['node-audit']);

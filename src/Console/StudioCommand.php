@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ArtisanStudio\StudioCli\Console;
 
 use ArtisanStudio\StudioCli\BackgroundTasks;
+use ArtisanStudio\StudioCli\Bridge\BridgeKeeper;
 use ArtisanStudio\StudioCli\Dashboard\DashboardSnapshot;
 use ArtisanStudio\StudioCli\Dashboard\FreshSnapshots;
 use ArtisanStudio\StudioCli\Dashboard\SampleSnapshots;
@@ -12,6 +13,7 @@ use ArtisanStudio\StudioCli\Dashboard\SnapshotSource;
 use ArtisanStudio\StudioCli\Editor;
 use ArtisanStudio\StudioCli\Fix\FixLauncher;
 use ArtisanStudio\StudioCli\Fix\FixPanel;
+use ArtisanStudio\StudioCli\Fix\FixProgress;
 use ArtisanStudio\StudioCli\Fix\LocalBranch;
 use ArtisanStudio\StudioCli\LocalChanges;
 use ArtisanStudio\StudioCli\LocalTime;
@@ -317,6 +319,10 @@ class StudioCommand extends Command implements HasScreen
         $asked = $snapshot?->fixesAsked ?? [];
         $ask = implode(',', $asked);
 
+        if ($ask === $this->fixesStarted && $this->laravel->make(FixProgress::class)->waitsForCleanBranch() && (new LocalBranch(base_path()))->isClean()) {
+            $this->fixesStarted = null;
+        }
+
         if ($asked === [] || $ask === $this->fixesStarted || $this->laravel->make(WorkLauncher::class)->isRunning() || ! $fixes->canStart($asked)) {
             $this->fixesStarted = $asked === [] ? null : $this->fixesStarted;
 
@@ -349,6 +355,7 @@ class StudioCommand extends Command implements HasScreen
     protected function screenTicked(): void
     {
         $this->askForTheTokenWhenNotLinked();
+        $this->laravel->make(BridgeKeeper::class)->keep();
         $this->openInsightsWhenFixesAreAsked();
         $this->sendTheFilesAsked();
         $this->runTheSearchesAsked();

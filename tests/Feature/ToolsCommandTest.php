@@ -2,7 +2,6 @@
 
 declare(strict_types=1);
 
-use ArtisanStudio\StudioCli\Console\ToolsCommand;
 use ArtisanStudio\StudioCli\Saloon\Requests\PingRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\ReportScanToolProgressRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\ShowScanToolsRequest;
@@ -90,10 +89,23 @@ it('gives up on a slow snapshot or ping soon, so the live counters on screen nev
         ->and((new PingRequest('owner/repo'))->config()->get('timeout'))->toBe(4);
 });
 
-it('runs every light check beside the tests, and holds only the heavy ones back for them', function (): void {
-    expect(ToolsCommand::waitsForTheTests(['pint']))->toBeFalse()
-        ->and(ToolsCommand::waitsForTheTests([]))->toBeFalse()
-        ->and(ToolsCommand::waitsForTheTests(['pint', 'phpstan']))->toBeTrue()
-        ->and(ToolsCommand::waitsForTheTests(['rector', 'studio-security', 'composer-audit']))->toBeFalse()
-        ->and(ToolsCommand::waitsForTheTests(['pest-type-coverage']))->toBeTrue();
+it('runs PHPStan and type coverage beside the tests instead of waiting for them to finish', function (): void {
+    Saloon::fake([
+        ShowScanToolsRequest::class => MockResponse::make(['tools' => ['phpstan', 'pest-type-coverage', 'tests']]),
+        ReportScanToolProgressRequest::class => MockResponse::make(['progress' => []], 202),
+        SubmitScanToolResultsRequest::class => MockResponse::make(['findings' => 0, 'excluded' => [], 'rulesets' => []], 202),
+    ]);
+    app(ToolStatus::class)->testsRunning();
+
+    Artisan::call('studio:tools', ['--plain' => true]);
+
+    $started = collect(Saloon::mockClient()->getRecordedResponses())
+        ->map(fn ($response): PendingRequest => $response->getPendingRequest())
+        ->filter(fn (PendingRequest $request): bool => $request->getRequest() instanceof ReportScanToolProgressRequest)
+        ->map(fn (PendingRequest $request): array => (array) $request->body()?->all())
+        ->filter(fn (array $body): bool => in_array($body['state'] ?? null, ['running', 'done', 'skipped'], true))
+        ->pluck('tool');
+
+    expect($started)->toContain('phpstan')->toContain('pest-type-coverage')
+        ->and(app(ToolStatus::class)->testsAreRunning())->toBeTrue();
 });

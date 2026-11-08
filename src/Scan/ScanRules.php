@@ -37,9 +37,9 @@ final class ScanRules
      * @var array<string, list<string>>
      */
     public const array GROUPS = [
-        self::INITIAL => ['pint', TestsCommand::TESTS],
-        'General' => ['rector'],
-        'Security' => ['composer-audit', 'node-audit'],
+        self::INITIAL => [TestsCommand::TESTS],
+        'Defaults' => ['rector', 'pint', 'composer-audit', 'node-audit'],
+        'Studio' => [],
         'Advanced' => ['phpstan', 'pest-type-coverage', 'pest-arch', TestsCommand::COVERAGE],
     ];
 

@@ -57,11 +57,11 @@ it('sits before Insights, and the static analysis tab is gone', function (): voi
         ->not->toContain('static-analysis');
 })->skip(fn (): bool => ! in_array('studio:scan', array_keys(Artisan::all()), true), 'the studio commands are not registered in this run');
 
-it('lists Pint and your tests first as Initial, waiting, before anything has run', function (): void {
+it('lists only your tests as Initial, waiting, before anything has run, and no Pint nobody chose', function (): void {
     $screen = ($this->scan)();
 
-    expect($screen)->toContain('[scan.idle]')->toContain('Initial')->toContain('Pint')->toContain('Your tests')->toContain('waiting')
-        ->and(strpos($screen, 'Pint'))->toBeLessThan(strpos($screen, 'Your tests'));
+    expect($screen)->toContain('[scan.idle]')->toContain('Initial')->toContain('Your tests')->toContain('waiting')
+        ->and($screen)->not->toContain('Pint');
 });
 
 it('counts the issues each rule caught, group by group, Initial first, then whatever was picked', function (): void {
@@ -74,17 +74,17 @@ it('counts the issues each rule caught, group by group, Initial first, then what
     $this->status->testsFinished(['ran' => true, 'took' => 1000, 'summary' => ['tests' => 3577, 'failed' => 2, 'skipped' => 3]]);
     $rows = app(ScanRules::class)->rows();
 
-    expect(collect($rows)->pluck('key')->all())->toBe(['pint', 'tests', 'rector', 'composer-audit', 'phpstan'])
-        ->and(collect($rows)->pluck('group')->all())->toBe(['Initial', 'Initial', 'General', 'Security', 'Advanced'])
-        ->and(collect($rows)->pluck('caught', 'key')->all())->toBe(['pint' => 47, 'tests' => 2, 'rector' => 3, 'composer-audit' => 0, 'phpstan' => null])
+    expect(collect($rows)->pluck('key')->all())->toBe(['tests', 'rector', 'pint', 'composer-audit', 'phpstan'])
+        ->and(collect($rows)->pluck('group')->all())->toBe(['Initial', 'Defaults', 'Defaults', 'Defaults', 'Advanced'])
+        ->and(collect($rows)->pluck('caught', 'key')->all())->toBe(['tests' => 2, 'rector' => 3, 'pint' => 47, 'composer-audit' => 0, 'phpstan' => null])
         ->and(app(ScanRules::class)->caught())->toBe(52);
 
     $screen = ($this->scan)();
 
-    expect($screen)->toContain('52 issues')->toContain('detected across 5 rules')->toContain('Issues')->toContain('detected')->toContain('Initial')->toContain('General')->toContain('Security')->toContain('Advanced')
+    expect($screen)->toContain('52 issues')->toContain('detected across 5 rules')->toContain('Issues')->toContain('detected')->toContain('Initial')->toContain('Defaults')->toContain('Advanced')
         ->toContain('2 failing of 3,577')->toContain('all clear')->toContain('waiting')
-        ->and(strpos($screen, 'Pint'))->toBeLessThan(strpos($screen, 'Rector'))
-        ->and(strpos($screen, 'Rector'))->toBeLessThan(strpos($screen, 'composer audit'))
+        ->and(strpos($screen, 'Rector'))->toBeLessThan(strpos($screen, 'Pint'))
+        ->and(strpos($screen, 'Pint'))->toBeLessThan(strpos($screen, 'composer audit'))
         ->and(strpos($screen, 'composer audit'))->toBeLessThan(strpos($screen, 'PHPStan'));
 });
 
@@ -122,7 +122,7 @@ it('counts everything a rule caught, however many, and shows a dash while it is 
         ->and(preg_match('/Pint\s+0/', $screen))->toBe(0);
 });
 
-it('starts over when the studio resets the scan: Pint and the tests waiting, nothing an earlier scan left on this machine', function (): void {
+it('starts over when the studio resets the scan: the tests waiting, nothing an earlier scan left on this machine', function (): void {
     $this->status->asked(['pint', 'tests']);
     $this->status->pick(['phpstan', 'rector']);
     $this->status->running(['pint', 'rector', 'phpstan']);
@@ -133,9 +133,9 @@ it('starts over when the studio resets the scan: Pint and the tests waiting, not
 
     $screen = ($this->plain)($studio->render(170, 40, 'scan'));
 
-    expect($screen)->toContain('Pint')->toContain('Your tests')->toContain('[scan.idle]')->toContain('0 issues')
-        ->not->toContain('Rector')->not->toContain('PHPStan')->not->toContain('10 passed')
-        ->and(collect(app(ScanRules::class)->forStudio(false)->rows())->pluck('key')->all())->toBe(['pint', 'tests']);
+    expect($screen)->toContain('Your tests')->toContain('[scan.idle]')->toContain('0 issues')
+        ->not->toContain('Pint')->not->toContain('Rector')->not->toContain('PHPStan')->not->toContain('10 passed')
+        ->and(collect(app(ScanRules::class)->forStudio(false)->rows())->pluck('key')->all())->toBe(['tests']);
 });
 
 it('shows how long each rule takes: counting while it runs, and its time once done', function (): void {
@@ -148,7 +148,7 @@ it('shows how long each rule takes: counting while it runs, and its time once do
 
     $rows = collect(app(ScanRules::class)->rows());
 
-    expect($rows->pluck('elapsed', 'key')->only(['pint', 'rector', 'tests'])->all())->toBe(['pint' => 4_700, 'tests' => 125_000, 'rector' => 26_800])
+    expect($rows->pluck('elapsed', 'key')->only(['pint', 'rector', 'tests'])->all())->toBe(['tests' => 125_000, 'rector' => 26_800, 'pint' => 4_700])
         ->and($rows->firstWhere('key', 'phpstan')['elapsed'])->toBeNull();
 
     $screen = ($this->scan)();

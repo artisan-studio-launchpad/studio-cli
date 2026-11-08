@@ -150,3 +150,20 @@ it('lets a detached task outlive the studio, and the next studio follows it to i
         ->and($later->isRunning('fixes'))->toBeFalse()
         ->and((new BackgroundTasks($this->root, $log))->isRunning('fixes'))->toBeFalse();
 });
+
+it('stops a task that runs past its timeout, which only asking for running never did, so a row cannot count on for ever', function (): void {
+    file_put_contents($this->root.'/artisan', '<?php sleep(30);');
+    $log = new ActivityLog;
+    $tasks = new BackgroundTasks($this->root, $log);
+
+    $tasks->start('tests', 'Your tests', 'Running your tests…', ['studio:tests'], timeout: 1);
+    usleep(1_300_000);
+
+    expect($tasks->isRunning('tests'))->toBeFalse();
+
+    $tasks->tick();
+
+    expect($log->entries()[0])->toMatchArray(['label' => 'Your tests', 'colour' => 'amber'])
+        ->and($log->entries()[0]['detail'])->toContain('so it was stopped')
+        ->and($tasks->isRunning('tests'))->toBeFalse();
+});

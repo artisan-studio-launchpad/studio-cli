@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace ArtisanStudio\StudioCli\Scan\Tools;
 
+use ArtisanStudio\StudioCli\Scan\TypeCoverageCache;
+
 class TypeCoverage extends Tool
 {
     public const string PLUGIN = 'vendor/pestphp/pest-plugin-type-coverage';
@@ -41,6 +43,7 @@ class TypeCoverage extends Tool
             return null;
         }
 
+        (new TypeCoverageCache($root))->prune();
         $this->report = sys_get_temp_dir().'/studio-type-coverage-'.bin2hex(random_bytes(6)).'.json';
 
         return ['vendor/bin/pest', '--type-coverage', '--min=0', '--type-coverage-json='.$this->report];

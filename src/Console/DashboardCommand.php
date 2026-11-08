@@ -14,7 +14,6 @@ use ArtisanStudio\StudioCli\Fix\FixPanel;
 use ArtisanStudio\StudioCli\Fix\FixProgress;
 use ArtisanStudio\StudioCli\Says;
 use ArtisanStudio\StudioCli\Scan\ScanProgress;
-use ArtisanStudio\StudioCli\Scan\Tools\Toolbox;
 use ArtisanStudio\StudioCli\Scan\ToolStatus;
 use ArtisanStudio\StudioCli\Terminal\Components\Alert;
 use ArtisanStudio\StudioCli\Terminal\Components\Card;
@@ -34,6 +33,8 @@ class DashboardCommand extends Command implements ProvidesTab
     private const string INSTALLING = 'install-tools';
 
     private const string BEST_PRACTICES = 'Best practices';
+
+    private const string TESTS = 'Tests';
 
     private const string ADVISORY = 'Advisory only';
 
@@ -63,11 +64,6 @@ class DashboardCommand extends Command implements ProvidesTab
             ->state(fn (SnapshotSource $source): DashboardSnapshot => $source->snapshot())
             ->unavailable(fn (NotConnected $notConnected): array => $notConnected->panel())
             ->components([
-                Text::make(fn (DashboardSnapshot $data): string => $data->hasScanned() ? $this->testsLine()['text'] : '')
-                    ->colour(fn (): string => $this->testsLine()['colour'])
-                    ->wrap()
-                    ->center()
-                    ->tight(),
                 Alert::make(fn (DashboardSnapshot $data): string => app(Says::class)->line(self::SAYS, $this->says($data))['title'])
                     ->colour(fn (DashboardSnapshot $data): string => app(Says::class)->line(self::SAYS, $this->says($data))['colour'])
                     ->description(fn (DashboardSnapshot $data): string => app(Says::class)->line(self::SAYS, $this->says($data))['line'])
@@ -231,14 +227,11 @@ class DashboardCommand extends Command implements ProvidesTab
      */
     private function scanCards(): array
     {
-        $toolbox = new Toolbox;
         $missing = app(ToolStatus::class)->missing();
 
         return [
             ...$this->firstStageCards(),
-            $this->toolCard('pint', $missing['pint']['name'] ?? $toolbox->name('pint'), isset($missing['pint'])),
             ...collect($missing)
-                ->except('pint')
                 ->map(fn (array $tool, string $key): Card => $this->toolCard($key, $tool['name'], true))
                 ->values()
                 ->all(),
@@ -267,16 +260,17 @@ class DashboardCommand extends Command implements ProvidesTab
                 default => $this->waitingCard('Blueprint', $waits),
             },
             match (true) {
-                $counted !== null => $this->doneCard('Conventions', number_format($counted['followed']).' followed', $counted['undecided'] === 0 ? 'green' : 'amber', $counted['undecided'] === 0 ? 'all decided' : number_format($counted['undecided']).' new to decide'),
+                $counted !== null => $this->doneCard('Conventions', number_format($counted['followed']).' followed', $counted['undecided'] === 0 ? 'green' : 'cyan', $counted['undecided'] === 0 ? 'all decided' : number_format($counted['undecided']).' new to decide'),
                 $tasks->isRunning('conventions') => $this->spinningCard('Conventions', 'cyan', 'Counting…', 'read-only'),
                 default => $this->waitingCard('Conventions', $waits),
             },
             match (true) {
-                ($counted['flagged'] ?? null) !== null => $this->doneCard(self::BEST_PRACTICES, $counted['flagged'] === 0 ? 'All clear' : trans_choice(':count file to look at|:count files to look at', $counted['flagged']), $counted['flagged'] === 0 ? 'green' : 'amber', self::ADVISORY),
+                ($counted['flagged'] ?? null) !== null => $this->doneCard(self::BEST_PRACTICES, $counted['flagged'] === 0 ? 'All clear' : trans_choice(':count file to look at|:count files to look at', $counted['flagged']), $counted['flagged'] === 0 ? 'green' : 'cyan', self::ADVISORY),
                 $counted !== null => null,
                 $tasks->isRunning('conventions') => $this->spinningCard(self::BEST_PRACTICES, 'cyan', 'Checking…', self::ADVISORY),
                 default => $this->waitingCard(self::BEST_PRACTICES, self::ADVISORY),
             },
+            $this->testsCard(),
         ]));
     }
 
@@ -292,7 +286,6 @@ class DashboardCommand extends Command implements ProvidesTab
             $this->waitingCard('Blueprint', 'starts with your scan'),
             $this->waitingCard('Conventions', 'starts with your scan'),
             $this->waitingCard(self::BEST_PRACTICES, self::ADVISORY),
-            $this->waitingCard((new Toolbox)->name('pint'), self::DETECTION),
         ];
     }
 
@@ -343,36 +336,34 @@ class DashboardCommand extends Command implements ProvidesTab
     }
 
     /**
-     * @param  array{state: string, tests?: int, failed?: int, skipped?: int, took?: int, reason?: string}  $tests
+     * The tests as the fourth card of the first stage, spinning like the
+     * others while they wait for the scan tools and run in the background. No
+     * card until the developer has asked for them.
      */
-    /**
-     * The tests as one plain line under the stats, not a card of their own.
-     *
-     * @return array{text: string, colour: string}
-     */
-    private function testsLine(): array
+    private function testsCard(): ?Card
     {
         $status = app(ToolStatus::class);
         $tests = $status->tests() ?? ($status->asks(TestsCommand::TESTS) ? ['state' => self::QUEUED] : null);
 
         if ($tests === null) {
-            return ['text' => '', 'colour' => 'soft'];
+            return null;
         }
 
         $failed = (int) ($tests['failed'] ?? 0);
         $skipped = (int) ($tests['skipped'] ?? 0);
         $passed = max(0, (int) ($tests['tests'] ?? 0) - $failed - $skipped);
-        $spinner = Spinner::frame();
 
         return match ($tests['state']) {
-            self::QUEUED => ['text' => $spinner.' Tests · waiting for the scan tools', 'colour' => 'cyan'],
-            ToolStatus::RUNNING => ['text' => $spinner.' Tests · running in the background…', 'colour' => 'cyan'],
-            ToolStatus::RAN => [
-                'text' => ($failed > 0 ? '! ' : '✓ ').'Tests · '.number_format($passed).' passed · '.number_format($failed).' failed · '.number_format($skipped).' skipped · in '.round(($tests['took'] ?? 0) / 1000).'s',
-                'colour' => $failed > 0 ? 'rose' : 'green',
-            ],
-            ToolStatus::OFF => ['text' => 'Tests · off, on at your next scan', 'colour' => 'dim'],
-            default => ['text' => '! Tests · did not run, see Activity', 'colour' => 'amber'],
+            self::QUEUED => $this->spinningCard(self::TESTS, 'cyan', 'Waiting…', 'for the scan tools'),
+            ToolStatus::RUNNING => $this->spinningCard(self::TESTS, 'cyan', 'Running…', 'in the background'),
+            ToolStatus::RAN => Card::make(self::TESTS)
+                ->icon($failed > 0 ? '⚠️' : '✅', $failed > 0 ? '!' : '✓')
+                ->colour($failed > 0 ? 'amber' : 'green')
+                ->value(number_format($passed).' passed')
+                ->description(number_format($failed).' failed · '.number_format($skipped).' skipped')
+                ->descriptionColour('soft'),
+            ToolStatus::OFF => Card::make(self::TESTS)->icon('⏳', '…')->colour('cyan')->value('Off')->description('on at your next scan')->descriptionColour('soft'),
+            default => Card::make(self::TESTS)->icon('⚠️', '!')->colour('amber')->value('Did not run')->description('see Activity')->descriptionColour('soft'),
         };
     }
 

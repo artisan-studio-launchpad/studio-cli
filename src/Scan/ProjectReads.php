@@ -56,10 +56,28 @@ final class ProjectReads
      */
     private array $texts = [];
 
+    /**
+     * @var array<string, true>|null
+     */
+    private ?array $only = null;
+
     public function __construct(
         private readonly string $root,
         private readonly int $mostBytesEachTime = 2_000_000,
     ) {}
+
+    /**
+     * Answers the studio's searches with only these files, for a check of a
+     * few files that has no use for the rest of the project. Files it names
+     * itself are still sent, and so are the searches that are about
+     * configuration and routes.
+     *
+     * @param  list<string>  $paths
+     */
+    public function restrictTo(array $paths): void
+    {
+        $this->only = array_fill_keys($paths, true);
+    }
 
     /**
      * What each search found, by its id.
@@ -99,7 +117,7 @@ final class ProjectReads
         }
 
         $searched = collect($searches)->flatMap(function (array $search): array {
-            $this->found[$search['id']] = $this->search($search);
+            $this->found[$search['id']] = $this->narrowed($search, $this->search($search));
 
             return ($search['read'] ?? false) === true ? array_filter($this->found[$search['id']], $this->isSendable(...)) : [];
         });
@@ -117,6 +135,20 @@ final class ProjectReads
         })->values()->all();
 
         return $searches === [] && $wanted->isEmpty() ? null : $more;
+    }
+
+    /**
+     * What a search found, cut to the files a restricted check reads.
+     *
+     * @param  array<mixed>  $search
+     * @param  list<string>  $found
+     * @return list<string>
+     */
+    private function narrowed(array $search, array $found): array
+    {
+        $about = array_values(array_filter((array) ($search['in'] ?? []), fn (mixed $folder): bool => is_string($folder) && ! in_array(trim($folder, '/'), ['routes', 'bootstrap', 'config'], true)));
+
+        return $this->only === null || ($search['read'] ?? false) !== true || $about === [] ? $found : array_values(array_filter($found, fn (string $path): bool => isset($this->only[$path])));
     }
 
     /**

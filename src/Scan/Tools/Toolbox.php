@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace ArtisanStudio\StudioCli\Scan\Tools;
 
+use ArtisanStudio\StudioCli\ProcessTree;
 use ArtisanStudio\StudioCli\Scan\LastFindings;
 use ArtisanStudio\StudioCli\Scan\Load;
 use ArtisanStudio\StudioCli\Scan\PackageNamespaces;
+use ArtisanStudio\StudioCli\Scan\PhpStanLevel;
 use Closure;
 use Symfony\Component\Process\Exception\ProcessTimedOutException;
 use Symfony\Component\Process\Process;
@@ -237,6 +239,15 @@ final class Toolbox
     }
 
     /**
+     * The PHPStan level the project's own config asks for, such as 5 or max,
+     * which the scan reports but does not follow: it always runs at the highest.
+     */
+    public function phpstanLevel(): ?string
+    {
+        return (new PhpStanLevel($this->root, PhpStan::CONFIGS))->label();
+    }
+
+    /**
      * @return array<string, string>
      */
     public function packages(): array
@@ -270,6 +281,11 @@ final class Toolbox
         return $this->finish($key, $this->start($key, $paths));
     }
 
+    public function checksOnlyTheFilesAsked(string $key): bool
+    {
+        return ($this->tools[$key] ?? null)?->checksOnlyTheFilesAsked() === true;
+    }
+
     public function canFix(string $key): bool
     {
         return ($this->tools[$key] ?? null)?->canFix($this->root) === true;
@@ -301,11 +317,26 @@ final class Toolbox
             return ['ran' => false, 'reason' => 'Could not start: '.class_basename($exception).'.'];
         }
 
+        $serial = $tool->serialFixCommand($this->root);
+
+        if (! $process->isSuccessful() && $serial !== null && $serial !== $command && preg_match('/timed out after \d+ seconds|ProcessPool\.php/i', $process->getErrorOutput().$process->getOutput()) === 1) {
+            $process = new Process([...$serial, ...$tool->pathArguments($paths)], $this->root, $this->environment(), timeout: $tool->timeout());
+
+            try {
+                $process->run();
+            } catch (ProcessTimedOutException) {
+                return ['ran' => false, 'reason' => $tool->tooSlow()];
+            } catch (Throwable $exception) {
+                return ['ran' => false, 'reason' => 'Could not start: '.class_basename($exception).'.'];
+            }
+        }
+
         $took = (int) ((hrtime(true) - $started) / 1_000_000);
+        $crashed = preg_match('/ProcessPool\.php/i', $process->getErrorOutput().$process->getOutput()) === 1;
 
         return $process->isSuccessful() || $tool->fixesEvenWhenFailing()
             ? ['ran' => true, 'took' => $took]
-            : ['ran' => false, 'reason' => 'It stopped with an error: '.$this->lastWords($process->getErrorOutput() ?: $process->getOutput()), 'took' => $took];
+            : ['ran' => false, 'reason' => $crashed ? 'Its parallel workers crashed (ProcessPool). Run it with --debug on one file to see why; it often means PHPStan packages that do not match its own.' : 'It stopped with an error: '.$this->lastWords($process->getErrorOutput() ?: $process->getOutput()), 'took' => $took];
     }
 
     /**
@@ -367,6 +398,13 @@ final class Toolbox
 
         $tool = $this->tools[$key];
 
+        if (isset($run['process']) && $run['process']->isRunning() && (hrtime(true) - $run['started']) / 1_000_000_000 > $tool->timeout()) {
+            $run['process']->getPid() === null || ProcessTree::stop($run['process']->getPid());
+            $run['process']->stop(0);
+
+            return ['ran' => false, 'reason' => $tool->tooSlow()];
+        }
+
         try {
             isset($run['process']) && $run['process']->wait();
         } catch (ProcessTimedOutException) {
@@ -376,6 +414,25 @@ final class Toolbox
         }
 
         $output = isset($run['process']) ? $run['process']->getOutput() : (string) $run['output'];
+
+        if (isset($run['process']) && preg_match('/timed out after \d+ seconds/i', $run['process']->getErrorOutput().$output) === 1) {
+            $serial = $tool->serialCommand($this->root);
+
+            if ($serial !== null && $serial !== $tool->command($this->root)) {
+                $again = new Process([...Load::gently(), ...$serial], $this->root, [...$this->environment(), ...$tool->environment()], timeout: $tool->timeout());
+
+                try {
+                    $again->run();
+                } catch (ProcessTimedOutException) {
+                    return ['ran' => false, 'reason' => $tool->tooSlow()];
+                } catch (Throwable $exception) {
+                    return ['ran' => false, 'reason' => 'Could not finish: '.class_basename($exception).'.'];
+                }
+
+                $output = $again->getOutput();
+            }
+        }
+
         $took = (int) ((hrtime(true) - $run['started']) / 1_000_000);
         $findings = $tool->findings($output, $this->root);
         $summary = $tool->summary();

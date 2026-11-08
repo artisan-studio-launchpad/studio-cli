@@ -9,7 +9,7 @@ use Throwable;
 
 /**
  * What a project has built, read from its own git history with no AI: the
- * conventional `feat:` and `feat(scope):` commits, newest first. A history
+ * conventional `feat:` and `feat(scope):` commits, newest first, and what its CHANGELOG lists. A history
  * that does not use conventional commits is reported as such and sends none,
  * since guessing at free-form messages gives messy, wrong results.
  */
@@ -31,11 +31,16 @@ final class FeatureCommits
 
     private const int AT_LEAST_CONVENTIONAL = 5;
 
+    private const int AT_LEAST_CHANGELOG = 3;
+
     private const float AT_LEAST_SHARE = 0.3;
 
     public function __construct(private readonly string $root) {}
 
     /**
+     * The tidy feature commits and what the changelog lists, each once. A
+     * history that is neither is reported as not usable.
+     *
      * @return array{commit: ?string, total: int, conventional: bool, commits: list<array{hash: string, committed_at: string, scope: ?string, subject: string, body: string}>}
      */
     public function read(): array
@@ -43,13 +48,28 @@ final class FeatureCommits
         $all = $this->log();
         $conventional = array_filter($all, fn (array $commit): bool => preg_match(self::CONVENTIONAL, $commit['subject']) === 1);
         $uses = count($conventional) >= self::AT_LEAST_CONVENTIONAL && count($all) > 0 && count($conventional) / count($all) >= self::AT_LEAST_SHARE;
+        $changelog = (new ChangelogEntries($this->root))->read();
+        $told = count($changelog) >= self::AT_LEAST_CHANGELOG;
+        $commits = $uses ? $this->features($all) : [];
 
         return [
             'commit' => $all[0]['hash'] ?? null,
             'total' => count($all),
-            'conventional' => $uses,
-            'commits' => $uses ? $this->features($all) : [],
+            'conventional' => $uses || $told,
+            'commits' => array_slice($told ? self::joined($commits, $changelog) : $commits, 0, self::MOST_SENT),
         ];
+    }
+
+    /**
+     * @param  list<array{hash: string, committed_at: string, scope: ?string, subject: string, body: string}>  $commits
+     * @param  list<array{hash: string, committed_at: string, scope: ?string, subject: string, body: string}>  $changelog
+     * @return list<array{hash: string, committed_at: string, scope: ?string, subject: string, body: string}>
+     */
+    private static function joined(array $commits, array $changelog): array
+    {
+        $said = array_map(fn (array $commit): string => mb_strtolower($commit['subject']), $commits);
+
+        return [...$commits, ...array_values(array_filter($changelog, fn (array $entry): bool => ! in_array(mb_strtolower($entry['subject']), $said, true)))];
     }
 
     /**

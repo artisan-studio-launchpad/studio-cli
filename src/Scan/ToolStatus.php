@@ -289,6 +289,19 @@ final class ToolStatus
     }
 
     /**
+     * Rules another run of the scan did not know of are added to the rules of
+     * the run under way, with what it has done kept as it was.
+     *
+     * @param  list<string>  $tools
+     */
+    public function alsoRunning(array $tools): void
+    {
+        $this->update(fn (array $status): array => ! is_array($status['run'] ?? null)
+            ? [...$status, 'run' => ['tools' => $tools, 'done' => [], 'starts' => [], 'outcomes' => []]]
+            : [...$status, 'run' => [...$status['run'], 'tools' => array_values(array_unique([...(array) ($status['run']['tools'] ?? []), ...$tools]))]]);
+    }
+
+    /**
      * @param  array{ran: bool, reason?: string, findings?: list<mixed>, took?: int}  $result
      */
     public function ran(string $tool, array $result = ['ran' => true]): void

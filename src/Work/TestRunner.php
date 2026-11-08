@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace ArtisanStudio\StudioCli\Work;
 
+use Closure;
+
 /**
  * What a work run needs from a project's tests: which of them cover the files
  * it changed, an example of how they are written, and which of them fail. It
@@ -21,11 +23,12 @@ interface TestRunner
     public function for(array $paths): array;
 
     /**
-     * A test of the project to copy the style of, for a file that has none.
+     * A test of the project to copy the style of, for files that have none.
      *
+     * @param  list<string>  $paths
      * @return array{path: string, content: string}|null
      */
-    public function example(string $path): ?array;
+    public function example(array $paths): ?array;
 
     /**
      * The tests that fail when these run, or null when they could not run.
@@ -34,6 +37,15 @@ interface TestRunner
      * @return list<string>|null
      */
     public function failing(array $tests): ?array;
+
+    /**
+     * Starts the tests now and gives back what reads which failed, so other
+     * checks of the same change can run in between.
+     *
+     * @param  list<string>  $tests
+     * @return Closure(): ?list<string>
+     */
+    public function failingLater(array $tests): Closure;
 
     /**
      * Each failing test with what it said, or null when they could not run.

@@ -11,8 +11,8 @@ use ArtisanStudio\StudioCli\Saloon\Requests\SubmitScanWorkRequest;
 use ArtisanStudio\StudioCli\Scan\Tools\Toolbox;
 use ArtisanStudio\StudioCli\Studio;
 use ArtisanStudio\StudioCli\TaskJournal;
+use ArtisanStudio\StudioCli\Tests\Support\FakeTestRunner;
 use ArtisanStudio\StudioCli\Work\BuildRun;
-use ArtisanStudio\StudioCli\Work\CoveringTests;
 use ArtisanStudio\StudioCli\Work\StepChecks;
 use ArtisanStudio\StudioCli\Work\WorkProgress;
 use Illuminate\Support\Facades\Process as Processes;
@@ -754,23 +754,15 @@ it('changes what it built for what the developer saw when they tried the app, an
 
 it('fixes the code the tests fail inside instead of the tests, and leaves a test whose own assertion fails to its writer', function (): void {
     $root = $this->root;
-    $tests = new class($root, new Toolbox($root)) extends CoveringTests
+    $tests = new class($root) extends FakeTestRunner
     {
-        public function for(array $paths): array
-        {
-            return [];
-        }
+        public function __construct(public string $root) {}
 
         public function failures(array $tests): ?array
         {
             $code = (string) @file_get_contents($this->root.'/app/Models/CoverageRun.php');
 
             return str_contains($code, 'fixed') ? [] : ['tests/Feature/CoverageRunTest.php › it has coverage runs' => "TypeError: total(): Return value must be of type float\n".$this->root."/app/Models/CoverageRun.php:7\n".$this->root.'/tests/Feature/CoverageRunTest.php:4'];
-        }
-
-        public function __construct(public string $root, Toolbox $toolbox)
-        {
-            parent::__construct($root, $toolbox);
         }
     };
     $this->replies['app/Models/CoverageRun.php'] = [

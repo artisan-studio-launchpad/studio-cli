@@ -99,7 +99,7 @@ class FixCommand extends Command
         };
 
         if ($refused !== null) {
-            $this->progress->refused($refused, $keys);
+            $this->progress->refused($refused, $keys, $branch->isRepository());
             $studio->submitScanFixReport(['refused' => $refused]);
 
             return $this->outcome($refused, self::FAILURE);
@@ -169,7 +169,7 @@ class FixCommand extends Command
 
         return function (array $progress) use ($studio, &$sent): void {
             $live = FixProgress::live($progress);
-            $states = $live['phase'].'|'.implode(',', array_column($live['rulesets'], 'state'));
+            $states = $live['phase'].'|'.$live['step'].'|'.implode(',', array_column($live['rulesets'], 'state'));
             $now = microtime(true);
 
             if ((string) ($progress['branch'] ?? '') === '' || ! in_array($live['phase'], [FixProgress::FIXING, FixProgress::CHECKING, FixProgress::FINISHED], true) || ($states === $sent['states'] && $now - $sent['at'] < self::HEARTBEAT_EVERY_SECONDS)) {
@@ -332,6 +332,7 @@ class FixCommand extends Command
         $started = hrtime(true);
         $this->progress?->running($keys);
         $names = implode(' and ', array_map($toolbox->name(...), $keys));
+        $this->progress?->stepping('reading what the scan found');
         $found = $fixes->findings($keys);
 
         $this->step($journal, $found['checked'] === []
@@ -339,6 +340,7 @@ class FixCommand extends Command
             : 'Checked '.implode(' and ', array_map($toolbox->name(...), $found['checked'])).' once, all at the same time.');
 
         $this->step($journal, 'Fixing '.$names.' file by file: every fix a file needs, written once.');
+        $this->progress?->stepping('fixing file by file');
         $counts = [];
         $paths = [];
         $shown = 0.0;
@@ -356,7 +358,14 @@ class FixCommand extends Command
             ? [...$found['findings'], AutomatedFixes::ARCH => [...$found['findings'][AutomatedFixes::ARCH], ...$own['swept']]]
             : $found['findings'];
         $this->step($journal, $this->sentLine($own));
-        $fixes->tidy($branch->changed(except: TargetedSecurityUpdates::NODE_FILES));
+
+        if ($this->picked('pint')) {
+            $tidied = hrtime(true);
+            $this->progress?->stepping('tidying the changed files with Pint');
+            $fixes->tidy($branch->changed(except: TargetedSecurityUpdates::NODE_FILES));
+            $this->step($journal, sprintf('Tidied in %ds.', (int) ((hrtime(true) - $tidied) / 1_000_000_000)));
+        }
+
         $fixed = array_sum(array_map(array_sum(...), $own['kinds']));
         $files = count($branch->changed(except: TargetedSecurityUpdates::NODE_FILES));
         $commit = $files === 0 ? null : $branch->commit(
@@ -369,22 +378,37 @@ class FixCommand extends Command
             ? $names.Says::named(': nothing {name} could fix automatically.')
             : sprintf('%s: %s fixed in %d %s, committed.', $names, number_format($fixed), $files, $files === 1 ? 'file' : 'files'));
 
-        $this->step($journal, 'Running Rector\'s type rules over the same files, in one go…');
-        $byRector = $fixes->rector(collect($found['findings'])
-            ->only(RectorRules::keys())
-            ->map(fn (array $findings, string $key): array => self::without($findings, $own['fixed'][$key] ?? []))
-            ->filter()
-            ->all());
-        $fixes->tidy($branch->changed(except: TargetedSecurityUpdates::NODE_FILES));
-        $rectorFiles = count($branch->changed(except: TargetedSecurityUpdates::NODE_FILES));
-        $rectorCommit = $rectorFiles === 0 ? null : $branch->commit(
-            sprintf(Says::named('refactor(rector): {name} ran Rector\'s type rules on %d %s'), $rectorFiles, $rectorFiles === 1 ? 'file' : 'files'),
-            "- Types Rector could prove, for {$names}\n- Rector's own rules, run on the files the scan flagged",
-            except: TargetedSecurityUpdates::NODE_FILES,
-        );
+        array_map(fn (string $key): mixed => $this->progress?->done($key, ! isset($found['failed'][$key]), array_sum($own['kinds'][$key] ?? []), $own['files'][$key] ?? 0, count($found['findings'][$key] ?? [])), $keys);
 
-        if ($rectorCommit !== null) {
-            $this->step($journal, sprintf('Rector typed %d more %s, committed.', $rectorFiles, $rectorFiles === 1 ? 'file' : 'files'));
+        $byRector = [];
+        $rectorCommit = null;
+
+        if ($this->picked('rector')) {
+            $this->step($journal, 'Running Rector\'s type rules over the same files, in one go…');
+            $this->progress?->stepping('running Rector\'s type rules');
+            $ranRector = hrtime(true);
+            $byRector = $fixes->rector(collect($found['findings'])
+                ->only(RectorRules::keys())
+                ->map(fn (array $findings, string $key): array => self::without($findings, $own['fixed'][$key] ?? []))
+                ->filter()
+                ->all());
+            $this->step($journal, sprintf('Rector ran in %ds.', (int) ((hrtime(true) - $ranRector) / 1_000_000_000)));
+
+            if ($this->picked('pint')) {
+                $this->progress?->stepping('tidying what Rector changed');
+                $fixes->tidy($branch->changed(except: TargetedSecurityUpdates::NODE_FILES));
+            }
+
+            $rectorFiles = count($branch->changed(except: TargetedSecurityUpdates::NODE_FILES));
+            $rectorCommit = $rectorFiles === 0 ? null : $branch->commit(
+                sprintf(Says::named('refactor(rector): {name} ran Rector\'s type rules on %d %s'), $rectorFiles, $rectorFiles === 1 ? 'file' : 'files'),
+                "- Types Rector could prove, for {$names}\n- Rector's own rules, run on the files the scan flagged",
+                except: TargetedSecurityUpdates::NODE_FILES,
+            );
+
+            if ($rectorCommit !== null) {
+                $this->step($journal, sprintf('Rector typed %d more %s, committed.', $rectorFiles, $rectorFiles === 1 ? 'file' : 'files'));
+            }
         }
 
         $took = (int) ((hrtime(true) - $started) / 1_000_000);
@@ -565,6 +589,15 @@ class FixCommand extends Command
                 ->all())
             ->push('- Every change is a fixed rule applied at the line the tool reported, file by file')
             ->implode("\n");
+    }
+
+    /**
+     * Whether the developer chose this rule for the run, so the ones that were
+     * not chosen, such as Pint's tidy and Rector's type rules, are never run.
+     */
+    private function picked(string $key): bool
+    {
+        return array_key_exists($key, (array) ($this->progress?->read()['rulesets'] ?? []));
     }
 
     private function step(TaskJournal $journal, string $line): void
