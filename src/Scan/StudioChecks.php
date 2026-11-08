@@ -6,6 +6,7 @@ namespace ArtisanStudio\StudioCli\Scan;
 
 use ArtisanStudio\StudioCli\StateFile;
 use ArtisanStudio\StudioCli\Studio;
+use Closure;
 
 /**
  * Runs the checks Artisan Studio describes. The studio says which files a
@@ -20,7 +21,7 @@ final class StudioChecks
 {
     private const string STATE = 'scan-checks';
 
-    private const int MOST_ROUNDS = 8;
+    private const int MOST_ROUNDS = 12;
 
     private const int MOST_BYTES_EACH_TIME = 16_000_000;
 
@@ -131,16 +132,47 @@ final class StudioChecks
         $studio = $this->studio ?? app(Studio::class);
         $reads = new ProjectReads($this->root, self::MOST_BYTES_EACH_TIME);
         $scoped = $only === null ? [] : ['only' => array_values(array_filter($only, $reads->isProjectPath(...)))];
+        $answer = $this->rounds($reads, fn (array $sent): ?array => $studio->runScanCheck($check, [...$scoped, ...$sent]));
+
+        return is_array($answer['findings'] ?? null) ? self::report($answer) : null;
+    }
+
+    /**
+     * What the studio answers to a question about some files, such as which
+     * tests cover them: paths, never code. Null when the studio could not be
+     * reached or never had what it needed.
+     *
+     * @param  list<string>  $about
+     * @return array<string, mixed>|null
+     */
+    public function ask(string $question, array $about): ?array
+    {
+        $studio = $this->studio ?? app(Studio::class);
+        $reads = new ProjectReads($this->root, self::MOST_BYTES_EACH_TIME);
+        $about = array_values(array_filter($about, $reads->isProjectPath(...)));
+
+        return $this->rounds($reads, fn (array $sent): ?array => $studio->askScanQuestion($question, ['about' => $about, ...$sent]));
+    }
+
+    /**
+     * Sends what the studio asks for, round by round, through the one filter,
+     * until it answers without asking for more.
+     *
+     * @param  Closure(array<string, mixed>): ?array<mixed>  $send
+     * @return array<mixed>|null
+     */
+    private function rounds(ProjectReads $reads, Closure $send): ?array
+    {
         $sent = [];
 
         for ($round = 1; $round <= self::MOST_ROUNDS; $round++) {
-            $answer = $studio->runScanCheck($check, [...$scoped, 'files' => $this->files($reads, $sent), 'missing' => $reads->missing(), 'found' => (object) $reads->found()]);
+            $answer = $send(['files' => $this->files($reads, $sent), 'missing' => $reads->missing(), 'found' => (object) $reads->found()]);
 
-            if (! is_array($answer) || is_array($answer['findings'] ?? null)) {
-                return is_array($answer) ? self::report($answer) : null;
+            if (! is_array($answer) || ! array_key_exists('needs', $answer)) {
+                return $answer;
             }
 
-            $more = $reads->answer((array) ($answer['needs'] ?? []), $sent);
+            $more = $reads->answer((array) $answer['needs'], $sent);
 
             if ($more === null) {
                 return null;

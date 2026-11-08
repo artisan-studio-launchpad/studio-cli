@@ -23,7 +23,7 @@ dataset('runner folders', [
     'scan tools' => ['src/Scan/Tools', ['ComposerAudit', 'DefinedTool', 'NodeAudit', 'PestArch', 'PhpStan', 'Pint', 'Rector', 'StudioRuleset', 'TestSuite', 'Tests', 'Tool', 'Toolbox', 'TypeCoverage'], []],
     'fix' => ['src/Fix', ['AutomatedFixes', 'FixLauncher', 'FixPanel', 'FixProgress', 'FixTimeline', 'LocalBranch', 'RectorRules', 'StudioFixes'], []],
     'fix security' => ['src/Fix/Security', ['TargetedSecurityUpdates'], []],
-    'work' => ['src/Work', ['BuildRun', 'EditApplier', 'PhpCheck', 'PrototypeCopy', 'StepChecks', 'TestRunner', 'Timeline', 'WorkLauncher', 'WorkPanel', 'WorkProgress', 'WorkRun'], []],
+    'work' => ['src/Work', ['BuildRun', 'EditApplier', 'PhpCheck', 'PrototypeCopy', 'StepChecks', 'StudioTestRunner', 'TestRunner', 'Timeline', 'WorkLauncher', 'WorkPanel', 'WorkProgress', 'WorkRun'], []],
     'work concerns' => ['src/Work/Concerns', ['AsksTheDeveloper', 'ChecksTheMachine', 'ReportsToTheStudio', 'StreamsFromTheStudio', 'TimesTheWork'], []],
 ]);
 

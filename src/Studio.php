@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ArtisanStudio\StudioCli;
 
 use ArtisanStudio\StudioCli\Bridge\BridgeKey;
+use ArtisanStudio\StudioCli\Saloon\Requests\AskScanQuestionRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\AuthorizeScanRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\ClaimAiTaskRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\FixScanFilesRequest;
@@ -258,6 +259,18 @@ class Studio
     public function runScanCheck(string $check, array $sent): ?array
     {
         return $this->quietly(new RunScanCheckRequest($this->project(), $check, $sent));
+    }
+
+    /**
+     * One round of a question about some files, such as which tests cover
+     * them: what the studio needs next, or the paths it answers with.
+     *
+     * @param  array<string, mixed>  $sent
+     * @return array<mixed>|null
+     */
+    public function askScanQuestion(string $question, array $sent): ?array
+    {
+        return $this->quietly(new AskScanQuestionRequest($this->project(), $question, $sent));
     }
 
     /**

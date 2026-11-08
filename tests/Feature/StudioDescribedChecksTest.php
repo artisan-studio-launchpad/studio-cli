@@ -151,3 +151,23 @@ it('keeps the checks and the groups the studio describes when it is asked which 
 
     @unlink(StateFile::for('scan-groups', base_path()));
 });
+
+it('puts a question to the studio in rounds, sending only the files it asks for through the one filter', function (): void {
+    $rounds = [];
+    app()->instance(Studio::class, Mockery::mock(Studio::class, function ($studio) use (&$rounds): void {
+        $studio->shouldReceive('askScanQuestion')->andReturnUsing(function (string $question, array $sent) use (&$rounds): array {
+            $rounds[] = [$question, $sent];
+
+            return count($rounds) === 1
+                ? ['needs' => ['read' => ['.env', 'app/Livewire/Invoice.php'], 'search' => []]]
+                : ['tests' => ['tests/Feature/InvoiceTest.php']];
+        });
+    }));
+
+    $answer = (new StudioChecks($this->root))->ask('covering-tests', ['app/Livewire/Invoice.php', '../outside.php']);
+
+    expect($answer)->toBe(['tests' => ['tests/Feature/InvoiceTest.php']])
+        ->and($rounds[0][1]['about'])->toBe(['app/Livewire/Invoice.php'])
+        ->and(array_column($rounds[1][1]['files'], 'path'))->toBe(['app/Livewire/Invoice.php'])
+        ->and($rounds[1][1]['missing'])->toContain('.env');
+});

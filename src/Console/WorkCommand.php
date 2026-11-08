@@ -8,11 +8,13 @@ use ArtisanStudio\StudioCli\BackgroundTasks;
 use ArtisanStudio\StudioCli\Bridge\BridgeGate;
 use ArtisanStudio\StudioCli\Editor;
 use ArtisanStudio\StudioCli\Fix\LocalBranch;
+use ArtisanStudio\StudioCli\Scan\StudioChecks;
 use ArtisanStudio\StudioCli\Scan\Tools\Toolbox;
 use ArtisanStudio\StudioCli\Studio;
 use ArtisanStudio\StudioCli\TaskJournal;
 use ArtisanStudio\StudioCli\Work\BuildRun;
 use ArtisanStudio\StudioCli\Work\StepChecks;
+use ArtisanStudio\StudioCli\Work\StudioTestRunner;
 use ArtisanStudio\StudioCli\Work\WorkProgress;
 use ArtisanStudio\StudioCli\Work\WorkRun;
 use Illuminate\Console\Command;
@@ -54,7 +56,8 @@ class WorkCommand extends Command
         }
 
         $toolbox = new Toolbox;
-        $run = new WorkRun(base_path(), $studio, $toolbox, new LocalBranch(base_path()), $progress, $journal);
+        $tests = new StudioTestRunner(base_path(), new StudioChecks(base_path(), $studio), $toolbox);
+        $run = new WorkRun(base_path(), $studio, $toolbox, new LocalBranch(base_path()), $progress, $journal, tests: $tests);
 
         if ($this->option('rechecks')) {
             return $this->outcome($run->recheck($work['rechecks']), self::SUCCESS);
@@ -81,7 +84,7 @@ class WorkCommand extends Command
         }
 
         $built = ($ask['job'] ?? null) === BuildRun::JOB
-            ? new BuildRun(base_path(), $studio, new LocalBranch(base_path()), $progress, $journal, new StepChecks(base_path(), $toolbox), editor: app(Editor::class))
+            ? new BuildRun(base_path(), $studio, new LocalBranch(base_path()), $progress, $journal, new StepChecks(base_path(), $toolbox), tests: $tests, editor: app(Editor::class))
             : null;
 
         return $this->outcome($built?->run($ask) ?? $run->run($ask), self::SUCCESS);
