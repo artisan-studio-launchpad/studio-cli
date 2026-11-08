@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ArtisanStudio\StudioCli\Console;
 
+use ArtisanStudio\StudioCli\Bridge\BridgeGate;
 use ArtisanStudio\StudioCli\Fix\AutomatedFixes;
 use ArtisanStudio\StudioCli\Fix\FixProgress;
 use ArtisanStudio\StudioCli\Fix\FixTimeline;
@@ -97,6 +98,12 @@ class InsightsFixCommand extends Command
     {
         if (! $studio->isLinked()) {
             $this->components->error('This project is not linked yet. Run php artisan studio:settings, then try again.');
+
+            return self::FAILURE;
+        }
+
+        if (! app(BridgeGate::class)->isConnected()) {
+            $this->components->error((string) __('studio-cli::bridge.blocked'));
 
             return self::FAILURE;
         }

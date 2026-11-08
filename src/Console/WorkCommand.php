@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ArtisanStudio\StudioCli\Console;
 
 use ArtisanStudio\StudioCli\BackgroundTasks;
+use ArtisanStudio\StudioCli\Bridge\BridgeGate;
 use ArtisanStudio\StudioCli\Editor;
 use ArtisanStudio\StudioCli\Fix\LocalBranch;
 use ArtisanStudio\StudioCli\Scan\Tools\Toolbox;
@@ -67,6 +68,12 @@ class WorkCommand extends Command
 
         if ($ask === null) {
             return $this->outcome('Nothing was asked of me.', self::SUCCESS);
+        }
+
+        if (! app(BridgeGate::class)->isConnected()) {
+            $studio->submitScanWork(['session' => (int) $ask['id'], 'state' => 'refused', 'refused' => (string) __('studio-cli::bridge.blocked')]);
+
+            return $this->outcome((string) __('studio-cli::bridge.blocked'), self::FAILURE);
         }
 
         if (! $this->option('yes') && (! $this->input->isInteractive() || ! confirm('Work through this on a new branch? Nothing is committed until you say it works, and nothing is pushed.', default: true))) {

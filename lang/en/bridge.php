@@ -19,10 +19,21 @@ return [
         'yes' => 'Yes, allow it',
         'no' => 'No, keep it off',
         'allowed' => 'The AI bridge is on. Artisan Studio runs its AI tasks through your Claude Code login, on this machine.',
-        'refused' => 'The AI bridge is off. The features that need it will say so.',
+        'refused' => 'The AI bridge is off. Scan and the report still work; fixing needs the bridge.',
         'not_given' => 'The AI bridge is off until you allow it. Run php artisan studio:bridge --start, or choose it in Settings in php artisan studio.',
-        'not_ready' => 'The AI bridge stays off: :reason',
+        'not_ready' => ':reason Scan and the report still work; fixing needs the bridge.',
         'account' => 'Claude Code is signed in as :who.',
+    ],
+
+    'blocked' => 'Fixing needs the AI bridge. Turn it on in Settings in php artisan studio, or run php artisan studio:bridge --start.',
+
+    'cli' => [
+        'running' => 'CLI running',
+        'bridge' => [
+            'on' => 'bridge on',
+            'off' => 'bridge off',
+            'attention' => 'bridge needs attention',
+        ],
     ],
 
     'setup' => [

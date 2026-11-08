@@ -168,13 +168,14 @@ class Studio
     }
 
     /**
-     * Tells the studio whether this machine lets it run AI tasks through the
-     * developer's own Claude Code, so the app can say which features need it.
-     * Nothing about the account is sent.
+     * Tells the studio whether the AI bridge is connected on this machine
+     * (on), not (off), or cannot be because Claude Code is missing or signed
+     * out (attention), so the app can hold back what changes code. Nothing
+     * about the account is sent.
      */
-    public function reportBridge(bool $on): void
+    public function reportBridge(string $state): void
     {
-        $this->quietly(new ReportBridgeRequest($this->project(), $on));
+        $this->quietly(new ReportBridgeRequest($this->project(), $state));
     }
 
     /**

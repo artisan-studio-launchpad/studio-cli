@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ArtisanStudio\StudioCli\Fix\Security;
 
+use ArtisanStudio\StudioCli\Bridge\BridgeGate;
 use ArtisanStudio\StudioCli\Studio;
 use Closure;
 use Symfony\Component\Process\Process;
@@ -59,6 +60,8 @@ final class TargetedSecurityUpdates
      */
     public function fix(string $key): array
     {
+        BridgeGate::must();
+
         return $key === 'composer-audit' ? $this->composer() : $this->node();
     }
 

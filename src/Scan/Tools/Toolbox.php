@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ArtisanStudio\StudioCli\Scan\Tools;
 
+use ArtisanStudio\StudioCli\Bridge\BridgeGate;
 use ArtisanStudio\StudioCli\ProcessTree;
 use ArtisanStudio\StudioCli\Scan\LastFindings;
 use ArtisanStudio\StudioCli\Scan\Load;
@@ -299,6 +300,8 @@ final class Toolbox
      */
     public function fix(string $key, array $paths = []): array
     {
+        BridgeGate::must();
+
         $tool = $this->tools[$key] ?? null;
         $command = $tool?->fixCommand($this->root);
 

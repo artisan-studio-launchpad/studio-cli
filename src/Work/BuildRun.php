@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ArtisanStudio\StudioCli\Work;
 
+use ArtisanStudio\StudioCli\Bridge\BridgeGate;
 use ArtisanStudio\StudioCli\Editor;
 use ArtisanStudio\StudioCli\Fix\LocalBranch;
 use ArtisanStudio\StudioCli\Prototype\Prototypes;
@@ -580,6 +581,7 @@ final class BuildRun
         $copied = collect($this->copies)
             ->filter(fn (string $copy, string $prototype): bool => is_file($this->root.'/'.$prototype) && ! is_file($this->root.'/'.$copy))
             ->each(function (string $copy, string $prototype): void {
+                BridgeGate::must();
                 is_dir(dirname($this->root.'/'.$copy)) || mkdir(dirname($this->root.'/'.$copy), 0755, true);
                 file_put_contents($this->root.'/'.$copy, PrototypeCopy::of((string) file_get_contents($this->root.'/'.$prototype), $this->copies));
             });
@@ -618,6 +620,7 @@ final class BuildRun
             return $builtAt;
         }
 
+        BridgeGate::must();
         file_put_contents($file, $checked['content']);
         $commit = $this->git->commit('feat('.LocalBranch::commitScope().'): the route to the real page', '- routes/web.php: '.implode(', ', $routed['added']).Says::named(', which the build left out, added beside the routes it belongs with by {name}'), only: ['routes/web.php']);
         $this->say(sprintf('The build left out the route to %s, so I added it beside the routes it belongs with%s.', implode(', ', $routed['added']), $commit === null ? '' : ' and committed it as '.substr($commit, 0, 7)));
@@ -702,6 +705,7 @@ final class BuildRun
             return false;
         }
 
+        $this->lastRendered === [] || BridgeGate::must();
         collect($this->lastRendered)->each(fn (string $content, string $file): bool => file_put_contents($this->root.'/'.$file, $content) !== false);
         $this->prototypeBroken = null;
         $this->say(sprintf('That change broke %s (%s), and I could not fix it, so I put back the version that rendered.', $path, rtrim($error, '.')));
@@ -1102,6 +1106,7 @@ final class BuildRun
             ->each(function (array $file, string $path): void {
                 $target = $this->root.'/'.$path;
                 $creating = ! is_file($target);
+                BridgeGate::must();
                 is_dir(dirname($target)) || mkdir(dirname($target), 0755, true);
                 file_put_contents($target, $file['content']);
                 $creating && $this->created[] = $path;
@@ -1360,6 +1365,8 @@ final class BuildRun
         if (($answer['decision'] ?? null) !== WorkRun::APPROVE || $this->halted()) {
             return __('studio-cli::build.migrate.left');
         }
+
+        BridgeGate::must();
 
         $failed = collect($paths)
             ->map(fn (string $path) => Process::path($this->root)->timeout(self::MIGRATE_SECONDS)->run([PHP_BINARY, 'artisan', 'migrate', '--path='.$path, '--no-interaction']))

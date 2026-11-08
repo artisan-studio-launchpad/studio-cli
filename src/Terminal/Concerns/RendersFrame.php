@@ -86,7 +86,7 @@ trait RendersFrame
     {
         $this->drawnAt($width);
 
-        if (! $this->showsTabs() || $width < self::MIN_WIDTH || $row !== self::PADDING + self::TABS_ROW) {
+        if (! $this->showsTabs() || $width < self::MIN_WIDTH || $row !== $this->tabsAtRow()) {
             return null;
         }
 
@@ -109,9 +109,18 @@ trait RendersFrame
 
         return $this->hasSettings()
             && $width >= self::MIN_WIDTH
-            && $row === self::PADDING + self::TABS_ROW
+            && $row === $this->tabsAtRow()
             && $at > $inner - mb_strwidth($this->settingsLabel(true))
             && $at <= $inner;
+    }
+
+    /**
+     * The row the tabs are drawn on, one lower while the header has a notice
+     * line under its rule.
+     */
+    private function tabsAtRow(): int
+    {
+        return self::PADDING + self::TABS_ROW + ($this->getNotice() === '' ? 0 : 1);
     }
 
     public function scrollLimit(int $width, int $height, ?string $tab = null, bool $help = false): int

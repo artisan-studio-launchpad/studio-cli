@@ -61,12 +61,12 @@ final class BridgeKeeper
     }
 
     /**
-     * The developer said yes: remember it, tell the studio, and start.
+     * The developer said yes: remember it and start. The studio is told when
+     * the bridge is really running, which the screen reports as it changes.
      */
     public function allow(): void
     {
         $this->consent->allow();
-        $this->studio->reportBridge(true);
         $this->triedAt = null;
         $this->keep();
     }
@@ -77,7 +77,7 @@ final class BridgeKeeper
     public function refuse(): void
     {
         $this->consent->refuse();
-        $this->studio->reportBridge(false);
+        $this->studio->reportBridge(BridgeGate::OFF);
         $this->tasks->stop([self::TASK]);
     }
 }

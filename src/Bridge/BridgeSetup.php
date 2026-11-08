@@ -4,8 +4,6 @@ declare(strict_types=1);
 
 namespace ArtisanStudio\StudioCli\Bridge;
 
-use Carbon\CarbonInterface;
-
 /**
  * What the setup screen and the studio screen say about the AI bridge, and
  * what picking yes or no there does.
@@ -16,14 +14,11 @@ final class BridgeSetup
 
     public const string NO = 'no';
 
-    private const int SAYS_FOR_SECONDS = 30;
-
-    private ?CarbonInterface $sayingSince = null;
-
     public function __construct(
         private readonly BridgeConsent $consent,
         private readonly ClaudeAccount $account,
         private readonly BridgeKeeper $keeper,
+        private readonly BridgeGate $gate,
     ) {}
 
     /**
@@ -112,34 +107,21 @@ final class BridgeSetup
     }
 
     /**
-     * The line for the studio screen: that the bridge is running, or empty.
+     * The status line of the studio screen: the CLI is running, and where the
+     * bridge stands beside it.
      */
     public function line(): string
     {
-        $missing = $this->missing();
-        $who = $this->account->who();
-
-        return match (true) {
-            $this->keeper->isRunning() => $who === null ? __('studio-cli::bridge.status.running') : __('studio-cli::bridge.status.running_as', ['who' => $who]),
-            $missing !== null && $this->isSaying() => __('studio-cli::bridge.consent.not_ready', ['reason' => $missing]),
-            default => '',
-        };
-    }
-
-    /**
-     * What is missing is said for half a minute from the first time it is
-     * asked, then left to the Settings row, so it is a message and not a nag.
-     */
-    private function isSaying(): bool
-    {
-        $this->sayingSince ??= now();
-
-        return $this->sayingSince->diffInSeconds(now(), true) < self::SAYS_FOR_SECONDS;
+        return __('studio-cli::bridge.cli.running').'   ⚡ '.__('studio-cli::bridge.cli.bridge.'.$this->gate->status());
     }
 
     public function lineColour(): string
     {
-        return $this->keeper->isRunning() ? 'green' : 'amber';
+        return match ($this->gate->status()) {
+            BridgeGate::ON => 'green',
+            BridgeGate::ATTENTION => 'amber',
+            default => 'soft',
+        };
     }
 
     /**

@@ -57,12 +57,12 @@ it('opens from s or the ⚙ at the far right of the tabs, and closes the same wa
     ($this->press)('s');
     $closed = ($this->studio)()->settingsAreOpen();
 
-    $tabs = ($this->plain)(($this->studio)()->lines(120, 30)[3]);
+    $tabs = ($this->plain)(($this->studio)()->lines(120, 30)[4]);
     $cog = mb_strpos($tabs, 'Settings') + 1;
     (fn (): int => $this->screenWidthNow = 120)->call($this->command);
-    ($this->press)("\e[<0;{$cog};4M");
+    ($this->press)("\e[<0;{$cog};5M");
     $clicked = ($this->studio)()->settingsAreOpen();
-    ($this->press)("\e[<0;{$cog};4M");
+    ($this->press)("\e[<0;{$cog};5M");
 
     expect($opened)->toBeTrue()
         ->and($closed)->toBeFalse()

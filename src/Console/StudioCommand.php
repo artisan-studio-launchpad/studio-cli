@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ArtisanStudio\StudioCli\Console;
 
 use ArtisanStudio\StudioCli\BackgroundTasks;
+use ArtisanStudio\StudioCli\Bridge\BridgeGate;
 use ArtisanStudio\StudioCli\Bridge\BridgeKeeper;
 use ArtisanStudio\StudioCli\Bridge\BridgeSetup;
 use ArtisanStudio\StudioCli\Dashboard\DashboardSnapshot;
@@ -66,6 +67,8 @@ class StudioCommand extends Command implements HasScreen
     private ?string $askedForTheToken = null;
 
     private bool $askedAboutTheBridge = false;
+
+    private ?string $bridgeReported = null;
 
     /**
      * @var list<int>
@@ -206,6 +209,33 @@ class StudioCommand extends Command implements HasScreen
         if ($setup->isUndecided() && $setup->notReady() === null) {
             $this->getScreen()->startSetting('bridge');
         }
+
+        $missing = $setup->missing();
+
+        $missing === null || $this->flashScreen((string) __('studio-cli::bridge.consent.not_ready', ['reason' => $missing]));
+    }
+
+    /**
+     * Tells the studio where the bridge stands each time that changes: on,
+     * off, or needing attention, so the app holds back what changes code
+     * whenever it is not on.
+     */
+    private function reportTheBridgeWhenItChanges(): void
+    {
+        $studio = $this->laravel->make(Studio::class);
+
+        if ($this->option('demo') || $this->option('fresh') || ! $studio->isLinked() || $studio->connection() !== Studio::CONNECTED) {
+            return;
+        }
+
+        $status = $this->laravel->make(BridgeGate::class)->status();
+
+        if ($status === $this->bridgeReported) {
+            return;
+        }
+
+        $this->bridgeReported = $status;
+        $studio->reportBridge($status);
     }
 
     /**
@@ -378,6 +408,7 @@ class StudioCommand extends Command implements HasScreen
     {
         $this->askForTheTokenWhenNotLinked();
         $this->askAboutTheBridgeOnce();
+        $this->reportTheBridgeWhenItChanges();
         $this->laravel->make(BridgeKeeper::class)->keep();
         $this->openInsightsWhenFixesAreAsked();
         $this->sendTheFilesAsked();

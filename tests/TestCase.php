@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ArtisanStudio\StudioCli\Tests;
 
+use ArtisanStudio\StudioCli\Bridge\BridgeGate;
 use ArtisanStudio\StudioCli\Bridge\Shell;
 use ArtisanStudio\StudioCli\Dashboard\SampleSnapshots;
 use ArtisanStudio\StudioCli\Dashboard\SnapshotSource;
@@ -44,6 +45,15 @@ abstract class TestCase extends Orchestra
             public function run(array $command, string $input, string $cwd, int $timeout): array
             {
                 return ['exit' => 0, 'out' => '{"loggedIn":true}', 'err' => '', 'timedOut' => false];
+            }
+        });
+        $this->app->instance(BridgeGate::class, new class extends BridgeGate
+        {
+            public function __construct() {}
+
+            public function status(): string
+            {
+                return self::ON;
             }
         });
         config(['studio-cli.bridge.consent_file' => sys_get_temp_dir().'/studio-consent-'.bin2hex(random_bytes(6)).'.json']);

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ArtisanStudio\StudioCli\Fix;
 
+use ArtisanStudio\StudioCli\Bridge\BridgeGate;
 use ArtisanStudio\StudioCli\Scan\ProjectReads;
 use ArtisanStudio\StudioCli\Studio;
 use Illuminate\Support\Collection;
@@ -69,6 +70,8 @@ final class StudioFixes
      */
     public function fix(array $findings, bool $sweep = false, ?callable $onFixed = null, ?callable $onEvent = null): array
     {
+        BridgeGate::must();
+
         $paths = array_values(array_unique(array_map(fn (array $finding): string => self::pathOf($finding['where']), array_merge(...array_values($findings)))));
         sort($paths);
         $batches = $this->batches($paths);
@@ -367,6 +370,8 @@ final class StudioFixes
      */
     private function write(): array
     {
+        $this->changed === [] || BridgeGate::must();
+
         return array_values(array_keys(array_filter(
             $this->changed,
             fn (string $content, string $path): bool => is_file($this->root.'/'.$path) && @file_put_contents($this->root.'/'.$path, $content) !== false,

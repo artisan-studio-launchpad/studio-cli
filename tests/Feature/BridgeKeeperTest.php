@@ -17,8 +17,8 @@ beforeEach(function (): void {
     $this->keeper = fn (bool $linked) => new BridgeKeeper(
         Mockery::mock(Studio::class, function ($mock) use ($linked): void {
             $mock->shouldReceive('isLinked')->andReturn($linked);
-            $mock->shouldReceive('reportBridge')->andReturnUsing(function (bool $on): void {
-                $this->told[] = $on;
+            $mock->shouldReceive('reportBridge')->andReturnUsing(function (string $state): void {
+                $this->told[] = $state;
             });
         }),
         $this->tasks,
@@ -66,16 +66,16 @@ it('does not start the bridge again within the minute, so a machine with no Clau
     expect($this->started)->toBe(1);
 });
 
-it('remembers a yes and starts, and remembers a no and tells the studio, each time', function (): void {
+it('remembers a yes and starts, and remembers a no and tells the studio it is off', function (): void {
     $keeper = ($this->keeper)(true);
 
     $keeper->allow();
-    $afterYes = [$this->consent->choice(), $this->started];
+    $afterYes = [$this->consent->choice(), $this->started, $this->told];
     $keeper->refuse();
 
-    expect($afterYes)->toBe([true, 1])
+    expect($afterYes)->toBe([true, 1, []])
         ->and($this->consent->choice())->toBeFalse()
-        ->and($this->told)->toBe([true, false]);
+        ->and($this->told)->toBe(['off']);
 });
 
 it('starts a command that accepts the flags every background task is started with', function (): void {

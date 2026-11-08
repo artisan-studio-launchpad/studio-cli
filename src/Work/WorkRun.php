@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ArtisanStudio\StudioCli\Work;
 
+use ArtisanStudio\StudioCli\Bridge\BridgeGate;
 use ArtisanStudio\StudioCli\Editor;
 use ArtisanStudio\StudioCli\Fix\LocalBranch;
 use ArtisanStudio\StudioCli\Says;
@@ -319,6 +320,7 @@ final class WorkRun
             return $this->leftAsItWas($path, $note !== '' ? $note : 'I could not write a new test file for it.');
         }
 
+        BridgeGate::must();
         is_dir(dirname($this->root.'/'.$target)) || mkdir(dirname($this->root.'/'.$target), 0755, true);
         file_put_contents($this->root.'/'.$target, (string) ($test['content'] ?? ''));
         unset($this->leftAsItWas[$path]);
@@ -667,6 +669,7 @@ final class WorkRun
             return $again;
         }
 
+        BridgeGate::must();
         $this->git->restore($this->git->changed($paths));
         array_map(fn (string $path, string $content): int|false => file_put_contents($this->root.'/'.$path, $content), array_keys($first), $first);
 
@@ -1353,6 +1356,7 @@ final class WorkRun
             return $path;
         }
 
+        BridgeGate::must();
         file_put_contents($this->root.'/'.$path, $checked['content']);
         unset($this->leftAsItWas[$path], $this->putBack[$path]);
         $note === '' || $this->notes[$path] = $note;
@@ -1561,6 +1565,7 @@ final class WorkRun
         try {
             return $this->tests?->failing($tests) ?? [];
         } finally {
+            BridgeGate::must();
             array_map(fn (string $path, string $content): int|false => file_put_contents($this->root.'/'.$path, $content), array_keys($edited), $edited);
         }
     }
@@ -1714,6 +1719,7 @@ final class WorkRun
             return $failed('The change left '.$path.' exactly as it was, so there was nothing to commit.');
         }
 
+        BridgeGate::must();
         is_dir(dirname($file)) || mkdir(dirname($file), 0755, true);
         file_put_contents($file, $checked['content']);
         $commit = $this->git->commit('fix('.LocalBranch::commitScope().'): the change you agreed to in '.$path, trim((string) ($proposal['why'] ?? '')) === '' ? '' : '- '.trim((string) $proposal['why']), only: [$path], new: $creates ? [$path] : []);

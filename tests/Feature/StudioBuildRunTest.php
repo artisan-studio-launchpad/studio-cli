@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use ArtisanStudio\StudioCli\Bridge\BridgeGate;
+use ArtisanStudio\StudioCli\Bridge\BridgeNotConnected;
 use ArtisanStudio\StudioCli\Editor;
 use ArtisanStudio\StudioCli\Fix\LocalBranch;
 use ArtisanStudio\StudioCli\Saloon\Requests\ShowScanWorkRequest;
@@ -106,6 +108,26 @@ beforeEach(function (): void {
 
 afterEach(function (): void {
     (new WorkProgress($this->root))->forget();
+});
+
+it('writes no file, cuts no branch and commits nothing while the bridge is not connected', function (): void {
+    app()->instance(BridgeGate::class, new class extends BridgeGate
+    {
+        public function __construct() {}
+
+        public function status(): string
+        {
+            return self::ATTENTION;
+        }
+    });
+    $before = (string) file_get_contents($this->root.'/app/Models/Project.php');
+
+    expect(fn () => ($this->run)()->run(($this->ask)()))->toThrow(BridgeNotConnected::class, __('studio-cli::bridge.blocked'));
+
+    expect(file_get_contents($this->root.'/app/Models/Project.php'))->toBe($before)
+        ->and(is_file($this->root.'/app/Models/CoverageRun.php'))->toBeFalse()
+        ->and(($this->git)('branch', '--show-current'))->toBe('develop')
+        ->and(($this->git)('log', '--format=%s', '-1'))->not->toStartWith('feat(studio)');
 });
 
 it('builds a planned idea step by step on its own branch, commits each step, and stops once at the end for the developer to try it', function (): void {

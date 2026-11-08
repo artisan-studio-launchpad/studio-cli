@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ArtisanStudio\StudioCli\Fix;
 
+use ArtisanStudio\StudioCli\Bridge\BridgeGate;
 use Closure;
 use Symfony\Component\Process\Process;
 use Throwable;
@@ -71,6 +72,8 @@ final class RectorRules
      */
     public function apply(array $keys, array $paths): ?array
     {
+        BridgeGate::must();
+
         $rules = array_values(array_unique(array_merge(...array_map($this->available(...), $keys))));
         $paths = array_values(array_filter(array_unique($paths), fn (string $path): bool => is_file($this->root.'/'.$path)));
 

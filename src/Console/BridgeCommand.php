@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace ArtisanStudio\StudioCli\Console;
 
+use ArtisanStudio\StudioCli\Bridge\BridgeBeat;
 use ArtisanStudio\StudioCli\Bridge\BridgeConsent;
+use ArtisanStudio\StudioCli\Bridge\BridgeGate;
 use ArtisanStudio\StudioCli\Bridge\BridgeKeeper;
 use ArtisanStudio\StudioCli\Bridge\BridgeLog;
 use ArtisanStudio\StudioCli\Bridge\BridgeWorker;
@@ -64,9 +66,12 @@ class BridgeCommand extends Command
 
         if ($this->option('start')) {
             $consent->allow();
-            $studio->reportBridge(true);
             $this->components->info(__('studio-cli::bridge.consent.allowed'));
         }
+
+        BridgeBeat::mark();
+        register_shutdown_function(BridgeBeat::unmark(...));
+        $studio->reportBridge(BridgeGate::ON);
 
         $log = new BridgeLog(storage_path('studio/bridge'), (bool) config('studio-cli.bridge.debug'));
 

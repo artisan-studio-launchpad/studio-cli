@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use ArtisanStudio\StudioCli\Bridge\BridgeGate;
+use ArtisanStudio\StudioCli\Bridge\BridgeNotConnected;
 use ArtisanStudio\StudioCli\Fix\LocalBranch;
 use ArtisanStudio\StudioCli\Saloon\Requests\ShowScanWorkRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\SubmitScanFixReportRequest;
@@ -137,6 +139,25 @@ beforeEach(function (): void {
 afterEach(function (): void {
     (new WorkProgress($this->root))->forget();
     (new LastFindings($this->root))->forget();
+});
+
+it('changes no file, cuts no branch and commits nothing while the bridge is not connected', function (): void {
+    app()->instance(BridgeGate::class, new class extends BridgeGate
+    {
+        public function __construct() {}
+
+        public function status(): string
+        {
+            return self::OFF;
+        }
+    });
+    $before = array_map(fn (int $n): string => (string) file_get_contents($this->root."/app/F{$n}.php"), range(1, 7));
+
+    expect(fn () => ($this->run)()->run(($this->ask)(7)))->toThrow(BridgeNotConnected::class, __('studio-cli::bridge.blocked'));
+
+    expect(array_map(fn (int $n): string => (string) file_get_contents($this->root."/app/F{$n}.php"), range(1, 7)))->toBe($before)
+        ->and(($this->git)('branch', '--show-current'))->toBe('develop')
+        ->and(($this->git)('log', '--format=%s'))->toBe('start');
 });
 
 it('works a job one kind of problem at a time with the studio, applies its edits here, commits what passes, and says what it did at the end without stopping', function (): void {

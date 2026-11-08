@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ArtisanStudio\StudioCli\Fix;
 
+use ArtisanStudio\StudioCli\Bridge\BridgeGate;
 use ArtisanStudio\StudioCli\Scan\ProjectReads;
 use Closure;
 use DateTimeImmutable;
@@ -113,6 +114,8 @@ final class LocalBranch
      */
     public function restore(array $paths): bool
     {
+        $paths === [] || BridgeGate::must();
+
         return $paths === [] || $this->git(['checkout', 'HEAD', '--', ...$paths]) !== null;
     }
 
@@ -219,6 +222,8 @@ final class LocalBranch
      */
     public function switchTo(string $branch): bool
     {
+        BridgeGate::must();
+
         return $this->git(['rev-parse', '--verify', '--quiet', 'refs/heads/'.$branch]) !== null && $this->git(['switch', $branch]) !== null;
     }
 
@@ -233,6 +238,8 @@ final class LocalBranch
      */
     public function startAt(string $name): ?string
     {
+        BridgeGate::must();
+
         $free = self::isStudioBranch($name) ? collect(range(1, 9))
             ->map(fn (int $try): string => $name.($try === 1 ? '' : '-'.$try))
             ->first(fn (string $candidate): bool => $this->git(['rev-parse', '--verify', '--quiet', 'refs/heads/'.$candidate]) === null) : null;
@@ -371,6 +378,8 @@ final class LocalBranch
      */
     public function commit(string $subject, string $body = '', array $only = [], array $except = [], array $new = [], bool $byStudio = true): ?string
     {
+        BridgeGate::must();
+
         $author = $byStudio ? config('studio-cli.author') : null;
 
         if (! $this->isOnStudioBranch()) {

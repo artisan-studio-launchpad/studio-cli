@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ArtisanStudio\StudioCli\Console;
 
 use ArtisanStudio\StudioCli\BackgroundTasks;
+use ArtisanStudio\StudioCli\Bridge\BridgeGate;
 use ArtisanStudio\StudioCli\Fix\AutomatedFixes;
 use ArtisanStudio\StudioCli\Fix\FixProgress;
 use ArtisanStudio\StudioCli\Fix\LocalBranch;
@@ -73,6 +74,12 @@ class FixCommand extends Command
 
         if (! $studio->isLinked()) {
             return $this->outcome('This project is not linked yet. Run php artisan studio:settings, then try again.', self::SUCCESS);
+        }
+
+        if (! app(BridgeGate::class)->isConnected()) {
+            $studio->submitScanFixReport(['refused' => (string) __('studio-cli::bridge.blocked')]);
+
+            return $this->outcome((string) __('studio-cli::bridge.blocked'), self::FAILURE);
         }
 
         $fromTheStudio = $studio->scanFixes() ?? [];

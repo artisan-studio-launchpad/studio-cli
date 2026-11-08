@@ -2,8 +2,8 @@
 
 declare(strict_types=1);
 
-use ArtisanStudio\StudioCli\BackgroundTasks;
 use ArtisanStudio\StudioCli\Bridge\BridgeConsent;
+use ArtisanStudio\StudioCli\Bridge\BridgeGate;
 use ArtisanStudio\StudioCli\Bridge\BridgeKeeper;
 use ArtisanStudio\StudioCli\Bridge\BridgeSetup;
 use ArtisanStudio\StudioCli\Bridge\ClaudeAccount;
@@ -20,7 +20,6 @@ use Saloon\Http\Faking\MockResponse;
 use Saloon\Laravel\Facades\Saloon;
 use Symfony\Component\Console\Input\ArrayInput;
 use Symfony\Component\Console\Output\BufferedOutput;
-use Symfony\Component\Process\Process;
 
 /*
 |--------------------------------------------------------------------------
@@ -116,14 +115,14 @@ it('offers Claude Code and nothing else, yes or no', function (): void {
     expect(array_keys(app(BridgeSetup::class)->choices()))->toBe([BridgeSetup::YES, BridgeSetup::NO]);
 });
 
-it('turns the bridge on with a yes, tells the studio, and stores it', function (): void {
+it('turns the bridge on with a yes and stores it, and tells the studio once the bridge is really running', function (): void {
     ($this->machine)();
 
     $said = app(BridgeSetup::class)->choose(BridgeSetup::YES);
 
     expect($said)->toBe(__('studio-cli::bridge.consent.allowed'))
         ->and(BridgeConsent::make()->choice())->toBeTrue()
-        ->and(($this->told)())->toBe(['on']);
+        ->and(($this->told)())->toBe([]);
 });
 
 it('turns the bridge off with a no, tells the studio, and stores it', function (): void {
@@ -167,41 +166,62 @@ it('does not ask when the developer has already said, either way', function (boo
     expect(($this->studio)()->settingsAreOpen())->toBeFalse();
 })->with([true, false]);
 
-it('says what is missing and carries on without the bridge when Claude Code is not installed or not signed in', function (bool $installed, bool $signedIn): void {
+it('says what is missing, and that scan and the report still work, when Claude Code is not installed or not signed in, and carries on without the bridge', function (bool $installed, bool $signedIn): void {
     ($this->machine)($installed, $signedIn);
 
     ($this->asks)();
 
+    $flash = (fn (): ?string => $this->screenFlash)->call($this->command);
+
     expect(($this->studio)()->settingsAreOpen())->toBeFalse()
-        ->and(($this->studio)()->getNotice())->toBe(__('studio-cli::bridge.consent.not_ready', ['reason' => app(BridgeSetup::class)->notReady()]))
+        ->and($flash)->toBe(__('studio-cli::bridge.consent.not_ready', ['reason' => app(BridgeSetup::class)->notReady()]))
         ->and(BridgeConsent::make()->choice())->toBeNull();
 })->with(['not installed' => [false, false], 'not signed in' => [true, false]]);
 
-it('says what is missing for half a minute and then leaves it to the Settings row', function (): void {
-    ($this->machine)(false, false);
+it('shows CLI running and where the bridge stands beside it: on, off, or needs attention', function (string $status, string $colour): void {
+    app()->instance(BridgeGate::class, new class($status) extends BridgeGate
+    {
+        public function __construct(private readonly string $is) {}
 
-    $first = ($this->studio)()->getNotice();
-    $this->travel(31)->seconds();
+        public function status(): string
+        {
+            return $this->is;
+        }
+    });
+    app()->forgetInstance(BridgeSetup::class);
 
-    expect($first)->not->toBe('')
-        ->and(($this->studio)()->getNotice())->toBe('');
-});
+    expect(($this->studio)()->getNotice())->toBe(__('studio-cli::bridge.cli.running').'   ⚡ '.__('studio-cli::bridge.cli.bridge.'.$status))
+        ->and(($this->studio)()->getNoticeColour())->toBe($colour);
+})->with([
+    'on' => [BridgeGate::ON, 'green'],
+    'off' => [BridgeGate::OFF, 'soft'],
+    'needs attention' => [BridgeGate::ATTENTION, 'amber'],
+]);
 
-it('shows a status line on the studio screen while the bridge runs, and none while it does not', function (): void {
-    ($this->machine)();
-    BridgeConsent::make()->allow();
-    $before = ($this->studio)()->getNotice();
-    $sleeping = new Process(['sleep', '20']);
-    $sleeping->start();
-    (new ReflectionProperty(app(BackgroundTasks::class), 'running'))->setValue(app(BackgroundTasks::class), [BridgeKeeper::TASK => ['process' => $sleeping, 'pid' => null, 'label' => 'x', 'journal' => '', 'offset' => 0, 'steps' => 0, 'then' => null]]);
+it('tells the studio where the bridge stands when it changes, and not again until it does', function (): void {
+    $status = BridgeGate::OFF;
+    app()->instance(BridgeGate::class, new class(function () use (&$status): string {
+        return $status;
+    }) extends BridgeGate
+    {
+        public function __construct(private readonly Closure $is) {}
 
-    $during = ($this->studio)()->getNotice();
-    $colour = ($this->studio)()->getNoticeColour();
-    $sleeping->stop(0);
+        public function status(): string
+        {
+            return ($this->is)();
+        }
+    });
+    $report = fn (): mixed => (fn (): mixed => $this->reportTheBridgeWhenItChanges())->call($this->command);
+    app(Studio::class)->projects();
 
-    expect($before)->toBe('')
-        ->and($during)->toBe(__('studio-cli::bridge.status.running'))
-        ->and($colour)->toBe('green');
+    $report();
+    $report();
+    $status = BridgeGate::ON;
+    $report();
+    $status = BridgeGate::ATTENTION;
+    $report();
+
+    expect(($this->told)())->toBe([BridgeGate::OFF, BridgeGate::ON, BridgeGate::ATTENTION]);
 });
 
 it('lets the developer change the answer later in Settings', function (): void {
