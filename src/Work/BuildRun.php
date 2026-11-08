@@ -89,6 +89,8 @@ final class BuildRun
 
     private ?ProjectReads $reads = null;
 
+    private bool $saidNoScreenshots = false;
+
     /**
      * @var list<string>
      */
@@ -322,25 +324,38 @@ final class BuildRun
         }
 
         $app = rtrim((string) config('app.url'), '/');
-        $shots = collect(['layout' => $app.'/prototype/'.$this->buildUuid, 'full' => $app.'/prototype/'.$this->buildUuid.'?full-page', 'modal' => $app.'/?prototype='.$this->buildUuid])
+        $sends = config('studio-cli.prototypes.send_screenshots') === true;
+        $shots = ! $sends ? [] : collect(['layout' => $app.'/prototype/'.$this->buildUuid, 'full' => $app.'/prototype/'.$this->buildUuid.'?full-page', 'modal' => $app.'/?prototype='.$this->buildUuid])
             ->map(fn (string $url, string $view): array => ['view' => $view, 'image' => app('studio-cli.prototype.shot')($url, self::SHOT_WIDTH, self::SHOT_HEIGHT), 'size' => self::SHOT_WIDTH.'x'.self::SHOT_HEIGHT])
             ->filter(fn (array $shot): bool => is_string($shot['image']))
             ->values()
             ->all();
 
-        if ($shots === []) {
+        if ($sends && $shots === []) {
             $this->say('I could not open a browser on this machine to look at the prototype, so I could not check how it looks.');
 
             return $at;
         }
 
-        $this->say('I’m looking at the prototype the way you will, in your layout, full page and in a modal, before you do.');
-        $review = $this->studio->reviewPrototype($this->session, $shots);
+        $review = null;
+
+        if ($sends) {
+            $this->say('I’m looking at the prototype the way you will, in your layout, full page and in a modal, before you do.');
+            $review = $this->studio->reviewPrototype($this->session, $shots);
+        } elseif (! $this->saidNoScreenshots) {
+            $this->saidNoScreenshots = true;
+            $this->say(__('studio-cli::build.screenshots.not_sent'));
+        }
+
         $measured = $this->measured(['full' => $app.'/prototype/'.$this->buildUuid.'?full-page', 'modal' => $app.'/?prototype='.$this->buildUuid]);
         $found = [...$measured, ...($review['problems'] ?? [])];
 
         if ($found === []) {
-            $this->say($review === null ? 'I could not get a look at it, so it goes to you as it is.' : 'It looks finished to me.');
+            $this->say(match (true) {
+                ! $sends => __('studio-cli::build.screenshots.measured_only'),
+                $review === null => 'I could not get a look at it, so it goes to you as it is.',
+                default => 'It looks finished to me.',
+            });
 
             return $at;
         }

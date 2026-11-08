@@ -73,12 +73,23 @@ return [
     | with ?full-page, and in a modal over any page with ?prototype={build}.
     | Served only while your app runs locally, unless you say otherwise here.
     |
+    | `review` has this machine look at the prototype in a browser before it
+    | is handed over, and measure it for cut-off and overflowing content.
+    |
+    | `send_screenshots` is a separate yes. A screenshot shows your app as it
+    | looks in your layout, so it can show a name, an email or a number from
+    | your data, and it cannot be filtered. Off, nothing like it leaves this
+    | machine: the prototype is still measured here, and the studio is not
+    | asked how it looks. On, three screenshots of the prototype (in your
+    | layout, full page, and in a modal) go to Artisan Studio for every look.
+    |
     */
 
     'prototypes' => [
         'serve' => env('STUDIO_CLI_SERVE_PROTOTYPES'),
         'browser' => env('STUDIO_CLI_BROWSER'),
         'review' => (bool) env('STUDIO_CLI_REVIEW_PROTOTYPES', false),
+        'send_screenshots' => (bool) env('STUDIO_CLI_SEND_SCREENSHOTS', false),
     ],
 
     /*

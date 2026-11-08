@@ -52,6 +52,7 @@ Nothing Artisan Studio sends is run as code. A tool it describes runs only from 
 - **Patching npm packages:** the audit's advisories and the dependencies your `package.json` lists.
 - **Working through a job:** the files of that job, and the searches it asks for. Artisan Studio holds them encrypted for up to two hours, never in its database.
 - **Opening the pull request:** the files on the fixes branch, so Artisan Studio can open the pull request on GitHub.
+- **Looking at a prototype:** only if you set `STUDIO_CLI_SEND_SCREENSHOTS=true`, three screenshots of it in your app, as they are: they cannot be filtered, and they can show names or numbers from your data. Off by default. The prototype is measured on your machine either way.
 - **Always:** that this terminal is open, and the repository's name.
 
 Files from `vendor`, `node_modules` and `storage`, `.env` files, and any file holding something that looks like a key or token are never sent.

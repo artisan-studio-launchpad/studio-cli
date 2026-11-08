@@ -434,7 +434,7 @@ it('looks at the prototype in a browser, has the studio say what is wrong with h
     ($this->git)('add', '-A');
     ($this->git)('commit', '--quiet', '-m', 'artisan');
     $uuid = '01a15b59-5b9b-70ad-8c19-b13a3c0393a5';
-    config(['app.url' => 'https://shop.test', 'studio-cli.prototypes.serve' => true, 'studio-cli.prototypes.review' => true]);
+    config(['app.url' => 'https://shop.test', 'studio-cli.prototypes.serve' => true, 'studio-cli.prototypes.review' => true, 'studio-cli.prototypes.send_screenshots' => true]);
     $shots = [];
     app()->instance('studio-cli.prototype.shot', function (string $url, int $width, int $height) use (&$shots): string {
         $shots[] = [$url, $width, $height];
@@ -486,12 +486,55 @@ it('looks at the prototype in a browser, has the studio say what is wrong with h
         ->and(file_get_contents($this->root.'/app/Livewire/Prototype/CoverageReport.php'))->toContain("'centre'");
 });
 
+it('measures the prototype here but takes and sends no screenshot unless send_screenshots is on', function (bool $sends): void {
+    file_put_contents($this->root.'/artisan', "<?php\necho json_encode(['path' => \$argv[2] ?? '', 'status' => 200, 'redirect' => null, 'error' => null, 'where' => null]);\n");
+    ($this->git)('add', '-A');
+    ($this->git)('commit', '--quiet', '-m', 'artisan');
+    $uuid = '01a15b59-5b9b-70ad-8c19-b13a3c0393a5';
+    config(['app.url' => 'https://shop.test', 'studio-cli.prototypes.serve' => true, 'studio-cli.prototypes.review' => true, 'studio-cli.prototypes.send_screenshots' => $sends]);
+    $shots = 0;
+    app()->instance('studio-cli.prototype.shot', function () use (&$shots): string {
+        $shots++;
+
+        return base64_encode('png');
+    });
+    $audited = 0;
+    app()->instance('studio-cli.prototype.audit', function () use (&$audited): array {
+        $audited++;
+
+        return [];
+    });
+    Saloon::fake([
+        ShowScanWorkRequest::class => fn () => MockResponse::make(['work' => ['sessions' => [['id' => 9, 'prepared' => ($this->prepared)(), 'answer' => $this->answer]], 'rechecks' => []]]),
+        SubmitScanWorkRequest::class => fn ($pending) => isset($pending->body()->all()['review']) ? MockResponse::make(['review' => ['looks_finished' => true, 'problems' => []]]) : MockResponse::make(['recorded' => true], 202),
+        SubmitScanFixReportRequest::class => MockResponse::make(['recorded' => true], 202),
+        SubmitScanToolResultsRequest::class => MockResponse::make(['findings' => 0, 'excluded' => [], 'rulesets' => []], 202),
+    ]);
+    $this->answer = ['decision' => 'approve', 'note' => null];
+    $this->plan['prototype_at'] = '/prototype/'.$uuid;
+    $this->plan['prototype_component'] = 'App\\Livewire\\Prototype\\CoverageReport';
+    $this->plan['steps'] = [
+        ['number' => 1, 'role' => 'spark', 'name' => 'Prototype', 'tone' => '#ffb020', 'title' => 'The prototype', 'line' => 'I show it.', 'prototype' => true, 'files' => [
+            ['path' => 'app/Livewire/Prototype/CoverageReport.php', 'action' => 'create', 'what' => 'Sample coverage.', 'pattern' => ''],
+        ]],
+    ];
+    $this->replies['app/Livewire/Prototype/CoverageReport.php'] = [['content' => "<?php\n\nnamespace App\\Livewire\\Prototype;\n\nclass CoverageReport\n{\n}\n", 'edits' => [], 'note' => 'Written.']];
+
+    ($this->run)()->run([...($this->ask)(), 'build' => $uuid]);
+
+    $sentShots = collect(($this->sent)('SubmitScanWorkRequest'))->pluck('review.shots')->filter()->flatten(1)->all();
+
+    expect($audited)->toBeGreaterThan(0)
+        ->and($shots > 0)->toBe($sends)
+        ->and($sentShots !== [])->toBe($sends);
+})->with(['off, the default' => false, 'on' => true]);
+
 it('rewrites only the prototype file a problem names, and leaves the others as they are', function (): void {
     file_put_contents($this->root.'/artisan', "<?php\necho json_encode(['path' => \$argv[2] ?? '', 'status' => 200, 'redirect' => null, 'error' => null, 'where' => null]);\n");
     ($this->git)('add', '-A');
     ($this->git)('commit', '--quiet', '-m', 'artisan');
     $uuid = '01a15b59-5b9b-70ad-8c19-b13a3c0393a5';
-    config(['app.url' => 'https://shop.test', 'studio-cli.prototypes.serve' => true, 'studio-cli.prototypes.review' => true]);
+    config(['app.url' => 'https://shop.test', 'studio-cli.prototypes.serve' => true, 'studio-cli.prototypes.review' => true, 'studio-cli.prototypes.send_screenshots' => true]);
     app()->instance('studio-cli.prototype.shot', fn (): string => base64_encode('png'));
     app()->instance('studio-cli.prototype.audit', fn (): array => []);
     $reviews = [['looks_finished' => false, 'problems' => ['CoverageSummary shows no figure.']], ['looks_finished' => true, 'problems' => []]];
@@ -529,7 +572,7 @@ it('sends the signed-off prototype to the studio, waits for the plan of the real
     ($this->git)('add', '-A');
     ($this->git)('commit', '--quiet', '-m', 'artisan');
     $uuid = '01a15b59-5b9b-70ad-8c19-b13a3c0393a5';
-    config(['app.url' => 'https://shop.test', 'studio-cli.prototypes.serve' => true, 'studio-cli.prototypes.review' => true]);
+    config(['app.url' => 'https://shop.test', 'studio-cli.prototypes.serve' => true, 'studio-cli.prototypes.review' => true, 'studio-cli.prototypes.send_screenshots' => true]);
     app()->instance('studio-cli.prototype.shot', fn (): string => base64_encode('png'));
     app()->instance('studio-cli.prototype.audit', fn (): array => []);
     $prototype = ['number' => 1, 'role' => 'spark', 'name' => 'Prototype', 'tone' => '#ffb020', 'title' => 'The prototype', 'line' => 'I show it.', 'prototype' => true, 'files' => [
@@ -794,7 +837,7 @@ it('says it could not look at the prototype when no browser can be opened, and s
     ($this->git)('add', '-A');
     ($this->git)('commit', '--quiet', '-m', 'artisan');
     $uuid = '01a15b59-5b9b-70ad-8c19-b13a3c0393a5';
-    config(['app.url' => 'https://shop.test', 'studio-cli.prototypes.serve' => true, 'studio-cli.prototypes.review' => true]);
+    config(['app.url' => 'https://shop.test', 'studio-cli.prototypes.serve' => true, 'studio-cli.prototypes.review' => true, 'studio-cli.prototypes.send_screenshots' => true]);
     app()->instance('studio-cli.prototype.shot', fn (): ?string => null);
     $this->answer = ['decision' => 'approve', 'note' => null];
     $this->plan['prototype_at'] = '/prototype/'.$uuid;
