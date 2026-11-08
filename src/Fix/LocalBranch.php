@@ -308,28 +308,6 @@ final class LocalBranch
     }
 
     /**
-     * The views and scripts that write any of these Livewire properties from
-     * the browser: wire:model on it, $set or $wire on it, or entangle.
-     *
-     * @param  list<string>  $properties
-     * @return list<string>
-     */
-    public function writersOf(array $properties): array
-    {
-        $names = implode('|', array_values(array_filter($properties, fn (string $name): bool => preg_match('/^\w+$/', $name) === 1)));
-        $quote = '["\']';
-        $pattern = implode('|', [
-            'wire:model[.a-zA-Z0-9_-]*='.$quote.'('.$names.')['.'"\'.[]',
-            '\$set\('.$quote.'('.$names.')['.'"\'.]',
-            '\$wire\.(set\('.$quote.')?('.$names.')([^A-Za-z0-9_]|$)',
-            'entangle\('.$quote.'('.$names.')['.'"\'.]',
-        ]);
-        $files = $names === '' ? null : $this->git(['grep', '-l', '-E', '-e', $pattern, '--', 'resources', 'app']);
-
-        return $files === null || $files === '' ? [] : explode("\n", $files);
-    }
-
-    /**
      * The app classes the repository tracks that use this trait in their
      * body, such as `use HasActiveAgent;` or `use Foo, HasActiveAgent;`.
      *
