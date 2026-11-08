@@ -104,7 +104,7 @@ class SettingsCommand extends Command implements ProvidesSettings
                 Action::make('bridge')
                     ->label(__('studio-cli::bridge.consent.label'))
                     ->visible(fn (array $state): bool => $state['linked'])
-                    ->question(__('studio-cli::bridge.consent.question'))
+                    ->question(fn (): string => app(BridgeSetup::class)->question())
                     ->options(fn (): array => app(BridgeSetup::class)->choices())
                     ->action(fn (string $choice): string => app(BridgeSetup::class)->choose($choice)),
             ]);

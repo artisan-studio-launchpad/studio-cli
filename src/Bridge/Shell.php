@@ -60,6 +60,12 @@ class Shell
             }
         }
 
+        $folder = config('studio-cli.bridge.claude_config_dir');
+
+        if (is_string($folder) && $folder !== '') {
+            $kept['CLAUDE_CONFIG_DIR'] = $folder;
+        }
+
         return [...array_fill_keys(array_map('strval', $everything), false), ...$kept, ...self::GIVEN];
     }
 

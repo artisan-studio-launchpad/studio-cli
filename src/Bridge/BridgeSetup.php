@@ -89,13 +89,26 @@ final class BridgeSetup
     public function row(): array
     {
         $missing = $this->notReady();
+        $who = $this->account->who();
 
         return match (true) {
-            $this->consent->choice() === true => ['label' => __('studio-cli::bridge.status.row'), 'value' => __('studio-cli::bridge.status.value.on'), 'status' => $this->keeper->isRunning() ? __('studio-cli::bridge.status.running_short') : __('studio-cli::bridge.status.on'), 'colour' => 'green'],
+            $this->consent->choice() === true => ['label' => __('studio-cli::bridge.status.row'), 'value' => $who === null ? __('studio-cli::bridge.status.value.on') : __('studio-cli::bridge.status.value.on_as', ['who' => $who]), 'status' => $this->keeper->isRunning() ? __('studio-cli::bridge.status.running_short') : __('studio-cli::bridge.status.on'), 'colour' => 'green'],
             $this->consent->choice() === false => ['label' => __('studio-cli::bridge.status.row'), 'value' => __('studio-cli::bridge.status.value.off'), 'status' => __('studio-cli::bridge.status.off'), 'colour' => 'dim'],
             $missing !== null => ['label' => __('studio-cli::bridge.status.row'), 'value' => $missing, 'status' => __('studio-cli::bridge.status.off'), 'colour' => 'amber'],
-            default => ['label' => __('studio-cli::bridge.status.row'), 'value' => __('studio-cli::bridge.status.value.undecided'), 'status' => __('studio-cli::bridge.status.asks'), 'colour' => 'amber'],
+            default => ['label' => __('studio-cli::bridge.status.row'), 'value' => $who === null ? __('studio-cli::bridge.status.value.undecided') : __('studio-cli::bridge.status.value.undecided_as', ['who' => $who]), 'status' => __('studio-cli::bridge.status.asks'), 'colour' => 'amber'],
         };
+    }
+
+    /**
+     * The question the setup screen asks, with the account Claude Code is
+     * signed in as when it can say, so the developer sees whose subscription
+     * a yes would use.
+     */
+    public function question(): string
+    {
+        $who = $this->account->who();
+
+        return __('studio-cli::bridge.consent.question').($who === null ? '' : "\n".__('studio-cli::bridge.consent.account', ['who' => $who]));
     }
 
     /**
@@ -104,9 +117,10 @@ final class BridgeSetup
     public function line(): string
     {
         $missing = $this->missing();
+        $who = $this->account->who();
 
         return match (true) {
-            $this->keeper->isRunning() => __('studio-cli::bridge.status.running'),
+            $this->keeper->isRunning() => $who === null ? __('studio-cli::bridge.status.running') : __('studio-cli::bridge.status.running_as', ['who' => $who]),
             $missing !== null && $this->isSaying() => __('studio-cli::bridge.consent.not_ready', ['reason' => $missing]),
             default => '',
         };

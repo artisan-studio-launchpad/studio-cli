@@ -22,7 +22,7 @@ final class Action
 
     private ?string $confirmation = null;
 
-    private ?string $question = null;
+    private string|Closure|null $question = null;
 
     private ?string $asks = null;
 
@@ -86,7 +86,7 @@ final class Action
      * what was picked. Unlike a confirmation, every choice comes back to the
      * action, so a no can be told from a yes.
      */
-    public function question(string $text): self
+    public function question(string|Closure $text): self
     {
         $this->question = $text;
 
@@ -95,7 +95,7 @@ final class Action
 
     public function getQuestion(): ?string
     {
-        return $this->question;
+        return $this->question instanceof Closure ? ($this->question)() : $this->question;
     }
 
     public function asks(string $hint, bool $secret = false, bool $optional = false): self

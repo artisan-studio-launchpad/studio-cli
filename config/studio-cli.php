@@ -352,9 +352,14 @@ return [
     | `consent_file` is where the developer's yes or no is kept. Left empty,
     | it is ~/.config/artisan-studio/bridge.json, readable by the user only.
     |
+    | `claude_config_dir` points the bridge at one Claude Code config folder,
+    | for a developer who is signed in to more than one Claude account. Left
+    | unset, Claude Code uses the folder it always does.
+    |
     */
 
     'bridge' => [
+        'claude_config_dir' => env('STUDIO_CLI_BRIDGE_CLAUDE_CONFIG_DIR'),
         'debug' => (bool) env('STUDIO_CLI_BRIDGE_DEBUG', false),
         'codex' => (bool) env('STUDIO_CLI_BRIDGE_CODEX', false),
         'public_keys' => array_values(array_filter(array_map('trim', explode(',', (string) env('STUDIO_CLI_BRIDGE_KEYS', ''))))),

@@ -22,6 +22,7 @@ return [
         'refused' => 'The AI bridge is off. The features that need it will say so.',
         'not_given' => 'The AI bridge is off until you allow it. Run php artisan studio:bridge --start, or choose it in Settings in php artisan studio.',
         'not_ready' => 'The AI bridge stays off: :reason',
+        'account' => 'Claude Code is signed in as :who.',
     ],
 
     'setup' => [
@@ -31,6 +32,7 @@ return [
 
     'status' => [
         'running' => 'AI bridge running on your Claude Code login',
+        'running_as' => 'AI bridge running on your Claude Code login, :who',
         'running_short' => 'running',
         'row' => 'AI bridge',
         'on' => 'on',
@@ -38,8 +40,10 @@ return [
         'asks' => 'asks first',
         'value' => [
             'on' => 'Runs its AI tasks through your Claude Code login',
+            'on_as' => 'Runs its AI tasks through your Claude Code login, :who',
             'off' => 'Your Claude Code login is not used',
             'undecided' => 'Not decided yet',
+            'undecided_as' => 'Not decided yet. Claude Code is signed in as :who',
         ],
     ],
 

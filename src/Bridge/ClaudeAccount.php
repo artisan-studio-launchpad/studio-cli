@@ -43,13 +43,21 @@ final class ClaudeAccount
 
     /**
      * Who Claude Code is signed in as, for a line on the screen: the email,
-     * else the organization, else null.
+     * else the organization, with the organization and plan after it. Null when
+     * it is not signed in, or says nothing about who.
      */
     public function who(): ?string
     {
         $status = $this->status();
+        $name = $status['email'] ?? $status['organization'];
 
-        return $status['signed_in'] ? ($status['email'] ?? $status['organization']) : null;
+        if (! $status['signed_in'] || $name === null) {
+            return null;
+        }
+
+        $more = array_values(array_filter([$status['email'] === null ? null : $status['organization'], $status['plan']]));
+
+        return $more === [] ? $name : $name.' ('.implode(', ', $more).')';
     }
 
     /**
