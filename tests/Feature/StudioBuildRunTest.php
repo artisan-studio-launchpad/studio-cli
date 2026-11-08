@@ -12,6 +12,7 @@ use ArtisanStudio\StudioCli\Scan\Tools\Toolbox;
 use ArtisanStudio\StudioCli\Studio;
 use ArtisanStudio\StudioCli\TaskJournal;
 use ArtisanStudio\StudioCli\Tests\Support\FakeTestRunner;
+use ArtisanStudio\StudioCli\Tests\Support\SecretLookingFiles;
 use ArtisanStudio\StudioCli\Work\BuildRun;
 use ArtisanStudio\StudioCli\Work\StepChecks;
 use ArtisanStudio\StudioCli\Work\WorkProgress;
@@ -803,6 +804,35 @@ it('says it could not look at the prototype when no browser can be opened, and s
 
     expect($said->contains(fn (string $line): bool => str_contains($line, 'could not open a browser')))->toBeTrue()
         ->and(collect(($this->sent)('SubmitScanWorkRequest'))->pluck('review')->filter()->all())->toBe([]);
+});
+
+it('never sends the studio a tracked env file, a key file or a file holding a secret from the signed-off prototype', function (): void {
+    SecretLookingFiles::plant($this->root);
+    ($this->git)('add', '-A');
+    ($this->git)('commit', '--quiet', '-m', 'files that look like secrets');
+    $run = ($this->run)();
+    $step = ['number' => 1, 'role' => 'spark', 'name' => 'Prototype', 'tone' => '#ffb020', 'title' => 'The prototype', 'line' => 'I show it.', 'prototype' => true, 'demo' => true, 'files' => array_map(fn (string $path): array => ['path' => $path, 'action' => 'create', 'what' => 'x', 'pattern' => ''], [...SecretLookingFiles::REFUSED, SecretLookingFiles::FINE])];
+
+    $files = (new ReflectionMethod($run, 'signedOffFiles'))->invoke($run, [$step]);
+
+    expect(array_column($files, 'path'))->toBe([SecretLookingFiles::FINE])
+        ->and(SecretLookingFiles::leaks(json_encode($files, JSON_THROW_ON_ERROR)))->toBeFalse();
+});
+
+it('never sends the studio a tracked env file, a key file or a file holding a secret as a file it reads while it writes', function (): void {
+    SecretLookingFiles::plant($this->root);
+    ($this->git)('add', '-A');
+    ($this->git)('commit', '--quiet', '-m', 'files that look like secrets');
+    $run = ($this->run)();
+    (new ReflectionProperty($run, 'read'))->setValue($run, [...SecretLookingFiles::REFUSED, SecretLookingFiles::FINE]);
+    $writing = [['path' => 'app/Models/Order.php', 'action' => 'create', 'what' => 'x', 'pattern' => SecretLookingFiles::REFUSED[0]]];
+
+    $related = (new ReflectionMethod($run, 'related'))->invoke($run, $writing);
+    $content = (new ReflectionMethod($run, 'contentOf'))->invoke($run, ['path' => '.env', 'action' => 'change', 'what' => 'x', 'pattern' => '']);
+
+    expect(array_column($related, 'path'))->toBe([SecretLookingFiles::FINE])
+        ->and(SecretLookingFiles::leaks(json_encode($related, JSON_THROW_ON_ERROR)))->toBeFalse()
+        ->and($content)->toBe('');
 });
 
 it('opens nothing at the end when the plan names no page to open', function (): void {

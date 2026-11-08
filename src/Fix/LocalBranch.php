@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ArtisanStudio\StudioCli\Fix;
 
+use Closure;
 use DateTimeImmutable;
 use DateTimeZone;
 use RuntimeException;
@@ -228,12 +229,16 @@ final class LocalBranch
     }
 
     /**
+     * The tracked lines that match, as path:line:text. A file the caller does
+     * not allow to leave this machine is left out before any line is counted.
+     *
+     * @param  (Closure(string): bool)|null  $allows
      * @return array{matches: list<string>, cut: bool}
      */
-    public function grep(string $pattern, ?string $in, int $most, string $secret): array
+    public function grep(string $pattern, ?string $in, int $most, string $secret, ?Closure $allows = null): array
     {
         $found = collect(explode("\n", (string) $this->git(['grep', '-n', '-I', '-E', '--no-color', '-e', $pattern, '--', $in ?? '.'])))
-            ->filter(fn (string $line): bool => $line !== '' && preg_match($secret, (string) strstr($line, ':', true)) !== 1)
+            ->filter(fn (string $line): bool => $line !== '' && preg_match($secret, (string) strstr($line, ':', true)) !== 1 && ($allows === null || $allows((string) strstr($line, ':', true))))
             ->map(fn (string $line): string => mb_substr($line, 0, 240))
             ->values();
 

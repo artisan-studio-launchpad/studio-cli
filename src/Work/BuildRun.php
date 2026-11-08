@@ -8,6 +8,7 @@ use ArtisanStudio\StudioCli\Editor;
 use ArtisanStudio\StudioCli\Fix\LocalBranch;
 use ArtisanStudio\StudioCli\Prototype\Prototypes;
 use ArtisanStudio\StudioCli\Says;
+use ArtisanStudio\StudioCli\Scan\ProjectReads;
 use ArtisanStudio\StudioCli\Studio;
 use ArtisanStudio\StudioCli\TaskJournal;
 use ArtisanStudio\StudioCli\Work\Concerns\AsksTheDeveloper;
@@ -85,6 +86,8 @@ final class BuildRun
     private ?string $from = null;
 
     private ?string $buildUuid = null;
+
+    private ?ProjectReads $reads = null;
 
     /**
      * @var list<string>
@@ -486,9 +489,18 @@ final class BuildRun
             ->flatMap(fn (array $step): array => array_column($step['files'], 'path'))
             ->unique()
             ->filter(fn (string $path): bool => is_file($this->root.'/'.$path) && filesize($this->root.'/'.$path) <= self::LARGEST_PLAN_FILE)
-            ->map(fn (string $path): array => ['path' => $path, 'content' => (string) file_get_contents($this->root.'/'.$path)])
+            ->map(fn (string $path): array => ['path' => $path, 'content' => $this->reads()->readable($path)])
+            ->filter(fn (array $file): bool => is_string($file['content']))
             ->values()
             ->all();
+    }
+
+    /**
+     * What may leave this machine: one filter for every file this build sends.
+     */
+    private function reads(): ProjectReads
+    {
+        return $this->reads ??= new ProjectReads($this->root);
     }
 
     /**
@@ -1096,7 +1108,7 @@ final class BuildRun
 
         $path = $this->root.'/'.$file['path'];
 
-        return ($file['action'] === 'change' || in_array($file['path'], $this->created, true)) && is_file($path) && filesize($path) <= self::LARGEST_FILE ? (string) file_get_contents($path) : '';
+        return ($file['action'] === 'change' || in_array($file['path'], $this->created, true)) && is_file($path) && filesize($path) <= self::LARGEST_FILE ? (string) $this->reads()->readable($file['path']) : '';
     }
 
     /**
@@ -1119,7 +1131,8 @@ final class BuildRun
         return array_values($wanted
             ->filter(fn (string $path): bool => in_array($path, $known, true))
             ->take(self::MOST_RELATED)
-            ->map(fn (string $path): array => ['path' => $path, 'content' => (string) file_get_contents($this->root.'/'.$path), 'for' => $paths])
+            ->map(fn (string $path): array => ['path' => $path, 'content' => $this->reads()->readable($path), 'for' => $paths])
+            ->filter(fn (array $file): bool => is_string($file['content']))
             ->reduce(fn (array $kept, array $file): array => array_sum(array_map(fn (array $held): int => strlen($held['content']), $kept)) + strlen($file['content']) > self::MOST_RELATED_BYTES ? $kept : [...$kept, $file], []));
     }
 

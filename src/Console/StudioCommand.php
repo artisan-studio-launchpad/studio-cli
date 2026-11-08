@@ -17,6 +17,7 @@ use ArtisanStudio\StudioCli\Fix\FixProgress;
 use ArtisanStudio\StudioCli\Fix\LocalBranch;
 use ArtisanStudio\StudioCli\LocalChanges;
 use ArtisanStudio\StudioCli\LocalTime;
+use ArtisanStudio\StudioCli\Scan\ProjectReads;
 use ArtisanStudio\StudioCli\Studio;
 use ArtisanStudio\StudioCli\Terminal\Concerns\InteractsWithScreen;
 use ArtisanStudio\StudioCli\Terminal\Contracts\HasScreen;
@@ -241,10 +242,7 @@ class StudioCommand extends Command implements HasScreen
         $root = $this->laravel->basePath();
         $tracked = (new LocalBranch($root))->tracked($wanted);
 
-        $this->laravel->make(Studio::class)->submitScanWork(['local' => array_map(fn (string $path): array => [
-            'path' => $path,
-            'content' => in_array($path, $tracked, true) && preg_match(self::SECRET, $path) !== 1 && is_file($root.'/'.$path) && filesize($root.'/'.$path) <= self::LARGEST_FILE ? (string) file_get_contents($root.'/'.$path) : null,
-        ], $wanted)]);
+        $this->laravel->make(Studio::class)->submitScanWork(['local' => (new ProjectReads($root))->askedFor($wanted, $tracked, self::LARGEST_FILE)]);
     }
 
     private function runTheSearchesAsked(): void
@@ -257,11 +255,12 @@ class StudioCommand extends Command implements HasScreen
         }
 
         $branch = new LocalBranch($this->laravel->basePath());
+        $reads = new ProjectReads($this->laravel->basePath());
         $this->searchesRun = [...array_filter($this->searchesRun, fn (int $at): bool => time() - $at < self::FILES_AGAIN_AFTER_SECONDS), ...array_fill_keys(array_column($new, 'id'), time())];
 
         $this->laravel->make(Studio::class)->submitScanWork(['searched' => array_map(fn (array $search): array => [
             'id' => $search['id'],
-            ...$branch->grep($search['pattern'], $search['in'] !== null && ! str_contains($search['in'], '..') ? $search['in'] : null, self::MOST_MATCHES, self::SECRET),
+            ...$branch->grep($search['pattern'], $search['in'] !== null && ! str_contains($search['in'], '..') ? $search['in'] : null, self::MOST_MATCHES, self::SECRET, $reads->allows(...)),
         ], $new)]);
     }
 

@@ -29,6 +29,20 @@ final class ProjectReads
     private const array EXTENSIONS = ['php', 'js', 'ts', 'vue', 'jsx', 'tsx', 'mjs', 'cjs'];
 
     /**
+     * Other files a job or a build works on, which may be sent when the job
+     * names them but are never searched.
+     *
+     * @var list<string>
+     */
+    private const array WORKED_ON = ['css', 'scss', 'json', 'md', 'yml', 'yaml', 'xml', 'html', 'txt'];
+
+    /**
+     * What a secret is called: an env file, Composer's auth file, a private
+     * key, a certificate.
+     */
+    private const string SECRET_NAME = '~(^|/)(\.env(\..*)?|auth\.json|id_[a-z0-9]+|[^/]+\.(pem|key|p12|pfx))$~i';
+
+    /**
      * Files other than code the studio may read: the PHPStan config it
      * fixes, and the lockfile's package versions.
      *
@@ -60,6 +74,11 @@ final class ProjectReads
      * @var array<string, true>|null
      */
     private ?array $only = null;
+
+    /**
+     * @var array<string, bool>
+     */
+    private array $allowed = [];
 
     public function __construct(
         private readonly string $root,
@@ -173,12 +192,37 @@ final class ProjectReads
         return $text;
     }
 
+    /**
+     * The files the app asked to see, as this machine has them now: only a
+     * file the repository tracks, that may leave this machine and is not too
+     * big. Any other is sent as missing, with no content.
+     *
+     * @param  list<string>  $wanted
+     * @param  list<string>  $tracked
+     * @return list<array{path: string, content: ?string}>
+     */
+    public function askedFor(array $wanted, array $tracked, int $largest): array
+    {
+        return array_map(fn (string $path): array => [
+            'path' => $path,
+            'content' => in_array($path, $tracked, true) && $this->isProjectPath($path) && is_file($this->root.'/'.$path) && filesize($this->root.'/'.$path) <= $largest ? $this->readable($path) : null,
+        ], $wanted);
+    }
+
+    /**
+     * Whether a file may leave this machine at all, remembered per file.
+     */
+    public function allows(string $path): bool
+    {
+        return $this->allowed[$path] ??= $this->readable($path) !== null;
+    }
+
     public function isSendable(string $path): bool
     {
         $full = $this->root.'/'.$path;
 
         return $this->isProjectPath($path)
-            && (in_array(pathinfo($path, PATHINFO_EXTENSION), self::EXTENSIONS, true) || in_array($path, self::NAMED, true))
+            && (in_array(pathinfo($path, PATHINFO_EXTENSION), [...self::EXTENSIONS, ...self::WORKED_ON], true) || in_array($path, self::NAMED, true))
             && ! $this->isSkipped($path)
             && is_file($full)
             && filesize($full) <= self::LARGEST_FILE;
@@ -236,7 +280,8 @@ final class ProjectReads
     private function isSkipped(string $path): bool
     {
         return collect(self::SKIPPED)->contains(fn (string $folder): bool => $path === $folder || str_starts_with($path, $folder.'/'))
-            || preg_match('#(^|/)\.env#', $path) === 1;
+            || preg_match('#(^|/)\.env#', $path) === 1
+            || preg_match(self::SECRET_NAME, $path) === 1;
     }
 
     private function holdsSecret(string $text): bool

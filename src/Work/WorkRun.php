@@ -8,6 +8,7 @@ use ArtisanStudio\StudioCli\Editor;
 use ArtisanStudio\StudioCli\Fix\LocalBranch;
 use ArtisanStudio\StudioCli\Says;
 use ArtisanStudio\StudioCli\Scan\LastFindings;
+use ArtisanStudio\StudioCli\Scan\ProjectReads;
 use ArtisanStudio\StudioCli\Scan\Tools\Tests;
 use ArtisanStudio\StudioCli\Scan\Tools\Toolbox;
 use ArtisanStudio\StudioCli\Studio;
@@ -183,6 +184,8 @@ final class WorkRun
     private ?array $prefetched = null;
 
     private bool $prefetchingNow = false;
+
+    private ?ProjectReads $reads = null;
 
     /**
      * The tools that checked only the files a fix changed, so the end of the
@@ -1125,10 +1128,11 @@ final class WorkRun
     {
         $paths = array_column($files, 'path');
         $tracked = array_values(array_filter($this->git->tracked($paths), fn (string $path): bool => is_file($this->root.'/'.$path)));
-        $contents = array_combine($tracked, array_map(fn (string $path): string => (string) file_get_contents($this->root.'/'.$path), $tracked));
+        $contents = array_filter(array_combine($tracked, array_map(fn (string $path): ?string => $this->reads()->readable($path), $tracked)), is_string(...));
         $fits = array_filter($contents, fn (string $content): bool => strlen($content) <= self::LARGEST_FILE);
         $sent = array_map(fn (string $path): array => ['path' => $path, 'content' => $fits[$path], ...($kind === self::TESTS ? ['diff' => mb_substr($this->git->lastChangeOf($path), 0, self::LARGEST_FILE)] : [])], array_keys($fits));
         $this->leftOut(array_values(array_diff($paths, $tracked)), 'is not in your repository, so it stays on your machine and I left it as it was.');
+        $this->leftOut(array_values(array_diff($tracked, array_keys($contents))), __('studio-cli::work.left_out.never_leaves'));
         $this->leftOut(array_keys(array_diff_key($contents, $fits)), 'is too big for me to work on, so I left it as it was.');
 
         if ($sent === []) {
@@ -1295,13 +1299,23 @@ final class WorkRun
             : []);
         $this->given = [...$this->given, ...$needs->all()];
         $wanted = $needs->flatten()->unique()->reject(fn (string $path): bool => isset($sent[$path]))->values()->all();
-        $tracked = array_values(array_filter($this->git->tracked($wanted), fn (string $path): bool => filesize($this->root.'/'.$path) <= self::LARGEST_FILE));
+        $texts = collect($this->git->tracked($wanted))
+            ->mapWithKeys(fn (string $path): array => [$path => filesize($this->root.'/'.$path) <= self::LARGEST_FILE ? $this->reads()->readable($path) : null])
+            ->filter(fn (mixed $text): bool => is_string($text));
 
-        return array_slice(array_map(fn (string $path): array => [
+        return array_slice($texts->map(fn (string $text, string $path): array => [
             'path' => $path,
-            'content' => (string) file_get_contents($this->root.'/'.$path),
+            'content' => $text,
             'for' => $needs->filter(fn (array $files): bool => in_array($path, $files, true))->keys()->values()->all(),
-        ], $tracked), 0, 60);
+        ])->values()->all(), 0, 60);
+    }
+
+    /**
+     * What may leave this machine: one filter for every file this run sends.
+     */
+    private function reads(): ProjectReads
+    {
+        return $this->reads ??= new ProjectReads($this->root);
     }
 
     /**

@@ -12,6 +12,7 @@ use ArtisanStudio\StudioCli\Scan\Tools\Toolbox;
 use ArtisanStudio\StudioCli\Studio;
 use ArtisanStudio\StudioCli\TaskJournal;
 use ArtisanStudio\StudioCli\Tests\Support\FakeTestRunner;
+use ArtisanStudio\StudioCli\Tests\Support\SecretLookingFiles;
 use ArtisanStudio\StudioCli\Work\TestRunner;
 use ArtisanStudio\StudioCli\Work\WorkProgress;
 use ArtisanStudio\StudioCli\Work\WorkRun;
@@ -310,6 +311,35 @@ it('sends the studio only as much of a long batch note as it takes, in whole par
         ->and($last['note'])->toStartWith('app/F1.php: Locked it.')->toEndWith('Locked it.')
         ->and($last['reasons'])->toHaveCount(7)
         ->and(mb_strlen((string) (new WorkProgress($this->root))->read()['batches'][0]['note']))->toBeGreaterThan(8000);
+});
+
+it('never sends the studio a tracked env file, a key file or a file holding a secret, and leaves each as it was', function (): void {
+    SecretLookingFiles::plant($this->root);
+    ($this->git)('add', '-A');
+    ($this->git)('commit', '--quiet', '-m', 'files that look like secrets');
+    $finding = ['tool' => 'phpstan', 'rule' => 'todo', 'line' => 2, 'title' => 'Fix me.'];
+    $ask = [...($this->ask)(1), 'files' => [...($this->ask)(1)['files'], ...array_map(fn (string $path): array => ['path' => $path, 'findings' => [$finding]], SecretLookingFiles::REFUSED)]];
+    $before = array_map(fn (string $path): string => (string) file_get_contents($this->root.'/'.$path), SecretLookingFiles::REFUSED);
+
+    ($this->run)()->run($ask);
+
+    expect(array_column(($this->asked)()[0]['files'], 'path'))->toBe(['app/F1.php'])
+        ->and(SecretLookingFiles::leaks(json_encode(($this->proposals)(), JSON_THROW_ON_ERROR)))->toBeFalse()
+        ->and(array_map(fn (string $path): string => (string) file_get_contents($this->root.'/'.$path), SecretLookingFiles::REFUSED))->toBe($before);
+});
+
+it('never sends a tracked env file, a key file or a file holding a secret as a file read beside another', function (): void {
+    SecretLookingFiles::plant($this->root);
+    ($this->git)('add', '-A');
+    ($this->git)('commit', '--quiet', '-m', 'files that look like secrets');
+    $run = ($this->run)();
+    (new ReflectionProperty($run, 'job'))->setValue($run, WorkRun::FAILING_TESTS);
+    (new ReflectionProperty($run, 'wanted'))->setValue($run, ['app/F1.php' => [...SecretLookingFiles::REFUSED, SecretLookingFiles::FINE]]);
+
+    $related = (new ReflectionMethod($run, 'dependedOn'))->invoke($run, ['app/F1.php' => "<?php\n"]);
+
+    expect(array_column($related, 'path'))->toBe([SecretLookingFiles::FINE])
+        ->and(SecretLookingFiles::leaks(json_encode($related, JSON_THROW_ON_ERROR)))->toBeFalse();
 });
 
 it('never sends the studio a file that is not in the repository, and leaves it as it was', function (): void {
