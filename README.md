@@ -39,9 +39,8 @@ php artisan studio:settings
 
 The CLI talks to Artisan Studio's API with your project's token. What it runs and what it says come from there, so they change without an update to this package:
 
-- **Which checking tools to run.** PHPStan, Pint, Rector, Pest's type coverage and arch presets, composer and npm audits, the security scan and your tests are run by this package. Other tools are described by Artisan Studio: which of your project's own binaries to run, when it is set up, and which parts of what it prints to send back to be read.
+- **Which checking tools to run.** PHPStan, Pint, Rector, Pest's type coverage and arch presets, composer and npm audits, the secrets check and your tests are run by this package. Other tools are described by Artisan Studio: which of your project's own binaries to run, when it is set up, and which parts of what it prints to send back to be read.
 - **The fixes.** They are made in Artisan Studio from the files sent up, and written here. So are the Rector rules to run, and the versions to patch npm packages to.
-- **The security scan's Livewire checks.** They run in Artisan Studio on the files they ask for.
 - **The avatar.** Its name, what it says on each tab, and its clips for the desktop.
 
 Nothing Artisan Studio sends is run as code. A tool it describes runs only from a binary already in your project's `vendor/bin`, with plain arguments, or as `php artisan config:validate`. Changes to your `package.json` are only plain version ranges for packages it already lists, and overrides held to one version line.
@@ -49,7 +48,6 @@ Nothing Artisan Studio sends is run as code. A tool it describes runs only from 
 ## What leaves your machine
 
 - **Scanning:** findings as file, line, rule and message; test counts with the failing tests' names and lines; your packages' names and versions, and the namespaces each one loads; the map of your models; counts of how your code is written. For the checking tools Artisan Studio describes, only the parts of their output it reads, with your project's path taken out. Never rows from your database.
-- **The security scan's Livewire checks:** the classes under `app/` that mention Livewire or are traits, the views your components render and the Blade components they use, your scripts in `resources/js`, your route files, `bootstrap/app.php` and `composer.lock`. Artisan Studio reads them in that same request, sends back what it found, and keeps none of them.
 - **Fixing the rules:** the files being fixed, the ones the fixes need to read, and your PHPStan config when it is the one being fixed. They are fixed in that same request, sent straight back, and never kept.
 - **Patching npm packages:** the audit's advisories and the dependencies your `package.json` lists.
 - **Working through a job:** the files of that job, and the searches it asks for. Artisan Studio holds them encrypted for up to two hours, never in its database.
@@ -78,7 +76,7 @@ The studio runs these in the background as it needs them, and you can run them y
 | `studio:install-tools` | Install the checking tools you switched on, asking first. |
 | `studio:blueprint` | Send the map of your models. |
 | `studio:conventions` | Count how your project is written. |
-| `studio:check` | Artisan Studio's own security checks, printed as JSON. |
+| `studio:check` | Look for committed keys and tokens, printed as JSON. |
 | `studio:render` | Open one page of your app as its first user and say whether it rendered. |
 | `studio:avatar-sync` | Download the avatar's clips, when they changed. |
 

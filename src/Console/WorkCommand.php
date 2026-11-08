@@ -8,12 +8,9 @@ use ArtisanStudio\StudioCli\BackgroundTasks;
 use ArtisanStudio\StudioCli\Editor;
 use ArtisanStudio\StudioCli\Fix\LocalBranch;
 use ArtisanStudio\StudioCli\Scan\Tools\Toolbox;
-use ArtisanStudio\StudioCli\Scan\ToolStatus;
 use ArtisanStudio\StudioCli\Studio;
 use ArtisanStudio\StudioCli\TaskJournal;
-use ArtisanStudio\StudioCli\TestSuite;
 use ArtisanStudio\StudioCli\Work\BuildRun;
-use ArtisanStudio\StudioCli\Work\CoveringTests;
 use ArtisanStudio\StudioCli\Work\StepChecks;
 use ArtisanStudio\StudioCli\Work\WorkProgress;
 use ArtisanStudio\StudioCli\Work\WorkRun;
@@ -39,7 +36,7 @@ class WorkCommand extends Command
 
     protected $description = 'Work through an Insights job on a new local branch, one kind of problem at a time, checked by the tool that found it and committed when you say it works';
 
-    public function handle(Studio $studio, TaskJournal $journal, WorkProgress $progress, ToolStatus $status): int
+    public function handle(Studio $studio, TaskJournal $journal, WorkProgress $progress): int
     {
         if (getenv(BackgroundTasks::DETACHED) === '1' && function_exists('posix_setsid')) {
             @posix_setsid();
@@ -56,8 +53,7 @@ class WorkCommand extends Command
         }
 
         $toolbox = new Toolbox;
-        $testsOn = ($status->tests()['state'] ?? null) === ToolStatus::RAN && (new TestSuite(base_path()))->problem() === null;
-        $run = new WorkRun(base_path(), $studio, $toolbox, new LocalBranch(base_path()), $progress, $journal, tests: $testsOn ? new CoveringTests(base_path(), $toolbox) : null);
+        $run = new WorkRun(base_path(), $studio, $toolbox, new LocalBranch(base_path()), $progress, $journal);
 
         if ($this->option('rechecks')) {
             return $this->outcome($run->recheck($work['rechecks']), self::SUCCESS);
@@ -78,7 +74,7 @@ class WorkCommand extends Command
         }
 
         $built = ($ask['job'] ?? null) === BuildRun::JOB
-            ? new BuildRun(base_path(), $studio, new LocalBranch(base_path()), $progress, $journal, new StepChecks(base_path(), $toolbox), tests: $testsOn ? new CoveringTests(base_path(), $toolbox) : null, editor: app(Editor::class))
+            ? new BuildRun(base_path(), $studio, new LocalBranch(base_path()), $progress, $journal, new StepChecks(base_path(), $toolbox), editor: app(Editor::class))
             : null;
 
         return $this->outcome($built?->run($ask) ?? $run->run($ask), self::SUCCESS);

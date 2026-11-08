@@ -11,12 +11,35 @@ use ArtisanStudio\StudioCli\Scan\LastFindings;
 use ArtisanStudio\StudioCli\Scan\Tools\Toolbox;
 use ArtisanStudio\StudioCli\Studio;
 use ArtisanStudio\StudioCli\TaskJournal;
-use ArtisanStudio\StudioCli\Work\CoveringTests;
+use ArtisanStudio\StudioCli\Work\TestRunner;
 use ArtisanStudio\StudioCli\Work\WorkProgress;
 use ArtisanStudio\StudioCli\Work\WorkRun;
 use Saloon\Http\Faking\MockResponse;
 use Saloon\Laravel\Facades\Saloon;
 use Symfony\Component\Process\Process;
+
+abstract class FakeTestRunner implements TestRunner
+{
+    public function for(array $paths): array
+    {
+        return [];
+    }
+
+    public function example(string $path): ?array
+    {
+        return null;
+    }
+
+    public function failing(array $tests): ?array
+    {
+        return [];
+    }
+
+    public function failures(array $tests): ?array
+    {
+        return [];
+    }
+}
 
 /*
 |--------------------------------------------------------------------------
@@ -75,7 +98,7 @@ beforeEach(function (): void {
         'files' => array_map(fn (int $n): array => ['path' => "app/F{$n}.php", 'findings' => [['tool' => 'phpstan', 'rule' => 'todo', 'line' => 2, 'title' => 'Fix me.']]], range(1, $files)),
     ];
     $this->kinds = fn (): array => [...($this->ask)(7), 'files' => array_map(fn (int $n): array => ['path' => "app/F{$n}.php", 'findings' => [['tool' => 'phpstan', 'rule' => $n <= 4 ? 'alpha' : 'beta', 'line' => 2, 'title' => 'Fix me.']]], range(1, 7))];
-    $this->run = fn (?CoveringTests $tests = null): WorkRun => new WorkRun($this->root, app(Studio::class), new Toolbox($this->root), new LocalBranch($this->root), new WorkProgress($this->root), new TaskJournal(null), 0, $this->tool, 0, $tests);
+    $this->run = fn (?TestRunner $tests = null): WorkRun => new WorkRun($this->root, app(Studio::class), new Toolbox($this->root), new LocalBranch($this->root), new WorkProgress($this->root), new TaskJournal(null), 0, $this->tool, 0, $tests);
     $this->answer = ['decision' => 'works', 'note' => null];
     $this->answers = [];
     $this->meanwhile = [];
@@ -326,7 +349,7 @@ it('never sends the studio a file that is not in the repository, and leaves it a
 });
 
 it('runs the tests that cover a kind after the change, and reruns a failure on the files as they were to tell what the change broke', function (): void {
-    $tests = new class($this->root, new Toolbox($this->root)) extends CoveringTests
+    $tests = new class($this->root) extends FakeTestRunner
     {
         public array $asked = [];
 
@@ -334,10 +357,7 @@ it('runs the tests that cover a kind after the change, and reruns a failure on t
 
         private array $runs = [['tests/F1Test.php › it keeps the string'], [], []];
 
-        public function __construct(public string $where, Toolbox $toolbox)
-        {
-            parent::__construct($where, $toolbox);
-        }
+        public function __construct(public string $where) {}
 
         public function for(array $paths): array
         {
@@ -368,7 +388,7 @@ it('runs the tests that cover a kind after the change, and reruns a failure on t
 });
 
 it('does not blame the change for a test that already failed on the files as they were', function (): void {
-    $tests = new class($this->root, new Toolbox($this->root)) extends CoveringTests
+    $tests = new class extends FakeTestRunner
     {
         public int $runs = 0;
 
@@ -391,45 +411,6 @@ it('does not blame the change for a test that already failed on the files as the
         ->and(($this->asked)())->toHaveCount(1)
         ->and(($this->git)('log', '--format=%s', 'develop..HEAD'))->toBe('fix(leftovers): SAMI worked through 1 file of Todo')
         ->and($line)->toContain('1 of 1 problem committed');
-});
-
-it('finds the tests that name a changed class, and cannot run them without a test runner', function (): void {
-    mkdir($this->root.'/tests/Feature', 0755, true);
-    file_put_contents($this->root.'/tests/Feature/F1Test.php', "<?php\nit('works', fn () => new App\\F1);\n");
-    file_put_contents($this->root.'/tests/Feature/OtherTest.php', "<?php\nit('works', fn () => new App\\F10);\n");
-    file_put_contents($this->root.'/tests/Feature/F1Helper.php', "<?php\n// F1\n");
-    $tests = new CoveringTests($this->root, new Toolbox($this->root));
-
-    expect($tests->for(['app/F1.php', 'resources/views/f1.blade.php']))->toBe(['tests/Feature/F1Test.php'])
-        ->and($tests->for(['resources/views/f1.blade.php', 'tests/Feature/F1Test.php']))->toBe([])
-        ->and($tests->failing(['tests/Feature/F1Test.php']))->toBeNull();
-});
-
-it('runs many covering tests side by side through a suite of its own outside the project, reads which fail, and leaves nothing behind', function (): void {
-    mkdir($this->root.'/vendor/bin', 0755, true);
-    file_put_contents($this->root.'/phpunit.xml', '<?xml version="1.0"?><phpunit bootstrap="vendor/autoload.php"><testsuites><testsuite name="All"><directory>tests</directory></testsuite></testsuites><source><include><directory>./app</directory></include></source><php><env name="APP_ENV" value="testing"/></php></phpunit>');
-    file_put_contents($this->root.'/vendor/bin/pest', "#!/usr/bin/env php\n<?php\n"
-        .'$config = $argv[array_search("--configuration", $argv) + 1]; $report = $argv[array_search("--log-junit", $argv) + 1];'
-        .'$xml = simplexml_load_file($config); $files = array_map("strval", $xml->xpath("//testsuite/file"));'
-        .'file_put_contents("seen.json", json_encode(["args" => array_slice($argv, 1), "config" => $config, "files" => $files, "suites" => count($xml->xpath("//testsuite")), "bootstrap" => (string) $xml["bootstrap"], "source" => (string) $xml->source->include->directory, "env" => (string) $xml->php->env["name"]]));'
-        .'$cases = implode("", array_map(fn ($f) => "<testcase name=\"it works for ".basename($f, "Test.php")."\" file=\"".$f."\">".(str_contains($f, "CTest") ? "<failure>no</failure>" : "")."</testcase>", $files));'
-        .'file_put_contents($report, "<?xml version=\"1.0\"?><testsuites><testsuite>".$cases."</testsuite></testsuites>");');
-    chmod($this->root.'/vendor/bin/pest', 0755);
-    $tests = array_map(fn (string $name): string => "tests/Feature/{$name}Test.php", ['A', 'B', 'C', 'D', 'E', 'F']);
-
-    $failing = (new CoveringTests($this->root, new Toolbox($this->root)))->failing($tests);
-    $seen = json_decode((string) file_get_contents($this->root.'/seen.json'), true);
-
-    expect($failing)->toBe(['tests/Feature/CTest.php › it works for C'])
-        ->and($seen['args'])->toContain('--parallel')->not->toContain('tests/Feature/ATest.php')
-        ->and($seen['config'])->toStartWith(sys_get_temp_dir())
-        ->and(is_file($seen['config']))->toBeFalse()
-        ->and($seen['files'])->toBe(array_map(fn (string $test): string => $this->root.'/'.$test, $tests))
-        ->and($seen['bootstrap'])->toBe($this->root.'/vendor/autoload.php')
-        ->and($seen['source'])->toBe($this->root.'/app')
-        ->and($seen['suites'])->toBe(1)
-        ->and($seen['env'])->toBe('APP_ENV')
-        ->and(glob($this->root.'/.studio-covering-*'))->toBe([]);
 });
 
 it('leaves a file the docs say needs no change as it was, says why with the link, and checks only the rest', function (): void {
@@ -552,7 +533,7 @@ it('puts back a kind it could not clear, commits the rest, and names what is lef
 });
 
 it('names the changed files no test covers, and tells the studio so it can ask for tests', function (): void {
-    $tests = new class($this->root, new Toolbox($this->root)) extends CoveringTests
+    $tests = new class extends FakeTestRunner
     {
         public function for(array $paths): array
         {
@@ -577,9 +558,14 @@ it('writes a test for each file it is asked to and commits them all without runn
     file_put_contents($this->root.'/tests/Feature/ExampleTest.php', "<?php\n\nit('works', fn () => expect(true)->toBeTrue());\n");
     ($this->git)('add', '-A');
     ($this->git)('commit', '--quiet', '-m', 'an example test');
-    $tests = new class($this->root, new Toolbox($this->root)) extends CoveringTests
+    $tests = new class($this->root) extends FakeTestRunner
     {
         public array $ran = [];
+
+        public function example(string $path): ?array
+        {
+            return ['path' => 'tests/Feature/ExampleTest.php', 'content' => (string) file_get_contents($this->where.'/tests/Feature/ExampleTest.php')];
+        }
 
         public function failures(array $tests): ?array
         {
@@ -588,10 +574,7 @@ it('writes a test for each file it is asked to and commits them all without runn
             return collect($tests)->filter(fn (string $test): bool => str_contains((string) file_get_contents($this->where.'/'.$test), 'BROKEN'))->mapWithKeys(fn (string $test): array => [$test.' › it works' => 'Failed asserting that false is true.'])->all();
         }
 
-        public function __construct(public string $where, Toolbox $toolbox)
-        {
-            parent::__construct($where, $toolbox);
-        }
+        public function __construct(public string $where) {}
     };
     $test = fn (string $name, string $body): array => ['edits' => [], 'note' => 'Proves the fix.', 'unneeded' => false, 'test' => ['path' => "tests/Feature/{$name}Test.php", 'content' => "<?php\n\nit('works', fn () => {$body});\n"]];
     $this->replies = [

@@ -33,7 +33,7 @@ final class Toolbox
     {
         $this->root = $root ?? base_path();
         $this->lastFindings = new LastFindings($this->root);
-        $this->tools = collect([...DefinedTool::all($this->root), new Pint, new PhpStan, new Rector, new ComposerAudit, new NodeAudit, new TypeCoverage, new PestArch, new StudioSecurityScan, new Tests])
+        $this->tools = collect([...DefinedTool::all($this->root), new Pint, new PhpStan, new Rector, new ComposerAudit, new NodeAudit, new TypeCoverage, new PestArch, new Tests])
             ->keyBy(fn (Tool $tool): string => $tool->key())
             ->all();
     }

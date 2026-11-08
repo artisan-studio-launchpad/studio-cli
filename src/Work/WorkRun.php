@@ -197,7 +197,7 @@ final class WorkRun
         private readonly int $pollSeconds = 1,
         private readonly ?Closure $check = null,
         private readonly int $pickupSeconds = 120,
-        private readonly ?CoveringTests $tests = null,
+        private readonly ?TestRunner $tests = null,
     ) {}
 
     /**
@@ -1091,33 +1091,6 @@ final class WorkRun
     }
 
     /**
-     * The code of only the tests in this file that fail: from each failing
-     * test's opening line to the next test.
-     */
-    private function failingCode(string $path, string $content): ?string
-    {
-        $lines = explode("\n", $content);
-        $starts = array_keys(array_filter($lines, fn (string $line): bool => preg_match('/^\s*(it|test|describe)\(/', $line) === 1));
-        $failing = array_map(fn (array $finding): int => (int) Str::afterLast($finding['where'], ':'), self::inFiles($this->baseline[Tests::KEY] ?? [], [$path]));
-
-        if ($starts === [] || $failing === [] || in_array(0, $failing, true)) {
-            return null;
-        }
-
-        $top = collect(array_slice($lines, 0, $starts[0]))->reject(fn (string $line): bool => preg_match('/^\s*(use|namespace|declare)\b|^<\?php/', $line) === 1)->implode("\n");
-
-        return $top."\n".collect($failing)
-            ->map(function (int $line) use ($lines, $starts): string {
-                $start = collect($starts)->filter(fn (int $at): bool => $at <= $line - 1)->max() ?? $starts[0];
-                $next = collect($starts)->first(fn (int $at): bool => $at > $start) ?? count($lines);
-
-                return implode("\n", array_slice($lines, $start, $next - $start));
-            })
-            ->unique()
-            ->implode("\n");
-    }
-
-    /**
      * The files that fit what the studio reads beside one file, most wanted first,
      * so a big page never buries the few files that decide it.
      *
@@ -1158,9 +1131,9 @@ final class WorkRun
     }
 
     /**
-     * The views and policies the sent files depend on, read only, so the
-     * studio decides from the code that decides it. Only files in the repository
-     * leave this machine.
+     * The files the studio asked to read beside the sent ones, read only.
+     * Which files a finding needs is for the studio to say. Only files in the
+     * repository leave this machine.
      *
      * @param  array<string, string>  $sent
      * @return list<array{path: string, content: string, for: list<string>}>
@@ -1168,8 +1141,8 @@ final class WorkRun
     private function dependedOn(array $sent): array
     {
         $needs = collect($sent)->map(fn (string $content, string $path): array => $this->job === self::FAILING_TESTS
-            ? $this->withinBudget(array_values(array_unique([...$this->wanted[$path] ?? [], ...$this->showing($path), ...(new DependsOn($this->root))->of($path, $content, $this->failingCode($path, $content))])))
-            : (new DependsOn($this->root))->of($path, $content));
+            ? $this->withinBudget(array_values(array_unique([...$this->wanted[$path] ?? [], ...$this->showing($path)])))
+            : []);
         $this->given = [...$this->given, ...$needs->all()];
         $wanted = $needs->flatten()->unique()->reject(fn (string $path): bool => isset($sent[$path]))->values()->all();
         $tracked = array_values(array_filter($this->git->tracked($wanted), fn (string $path): bool => filesize($this->root.'/'.$path) <= self::LARGEST_FILE));

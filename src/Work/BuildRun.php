@@ -101,7 +101,7 @@ final class BuildRun
         private readonly StepChecks $checks,
         private readonly int $pollSeconds = 1,
         private readonly int $pickupSeconds = 300,
-        private readonly ?CoveringTests $tests = null,
+        private readonly ?TestRunner $tests = null,
         private readonly ?Editor $editor = null,
     ) {}
 

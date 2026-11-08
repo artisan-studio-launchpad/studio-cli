@@ -37,7 +37,7 @@ class ConventionsCommand extends Command
         $checks = count($detectors['checks']);
         $this->step($journal, "Asked the studio what to look for: {$checks} conventions and ".count($scan).' known problems.');
 
-        $facts = $walk->facts(['checks' => [...$detectors['checks'], ...$scan]], function (int $done, int $total) use ($progress, $journal): void {
+        $facts = $walk->facts(['checks' => [...$detectors['checks'], ...$scan], 'testable' => (array) ($detectors['testable'] ?? [])], function (int $done, int $total) use ($progress, $journal): void {
             if ($done === 0) {
                 $this->step($journal, 'Listed your files with git ls-files: '.number_format($total).' tracked, .gitignore respected.');
             }
