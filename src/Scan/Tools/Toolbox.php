@@ -10,6 +10,7 @@ use ArtisanStudio\StudioCli\Scan\LastFindings;
 use ArtisanStudio\StudioCli\Scan\Load;
 use ArtisanStudio\StudioCli\Scan\PackageNamespaces;
 use ArtisanStudio\StudioCli\Scan\PhpStanLevel;
+use ArtisanStudio\StudioCli\Scan\StudioChecks;
 use Closure;
 use Symfony\Component\Process\Exception\ProcessTimedOutException;
 use Symfony\Component\Process\Process;
@@ -36,7 +37,7 @@ final class Toolbox
     {
         $this->root = $root ?? base_path();
         $this->lastFindings = new LastFindings($this->root);
-        $this->tools = collect([...DefinedTool::all($this->root), new Pint, new PhpStan, new Rector, new ComposerAudit, new NodeAudit, new TypeCoverage, new PestArch, new Tests])
+        $this->tools = collect([...DefinedTool::all($this->root), ...StudioRuleset::all($this->root, new StudioChecks($this->root)), new Pint, new PhpStan, new Rector, new ComposerAudit, new NodeAudit, new TypeCoverage, new PestArch, new Tests])
             ->keyBy(fn (Tool $tool): string => $tool->key())
             ->all();
     }
@@ -375,7 +376,7 @@ final class Toolbox
         }
 
         if ($command === []) {
-            return ['output' => '', 'started' => hrtime(true)];
+            return ['output' => '', 'started' => hrtime(true), 'paths' => $paths];
         }
 
         $process = new Process([...Load::gently(), ...($paths === [] ? $command : $tool->scopedTo($command, $paths))], $this->root, [...$this->environment(), ...$tool->environment()], timeout: $tool->timeout());
@@ -437,7 +438,7 @@ final class Toolbox
         }
 
         $took = (int) ((hrtime(true) - $run['started']) / 1_000_000);
-        $findings = $tool->findings($output, $this->root);
+        $findings = $tool instanceof StudioRuleset ? $tool->findingsIn((array) ($run['paths'] ?? [])) : $tool->findings($output, $this->root);
         $summary = $tool->summary();
         $unread = $tool->unread($output);
 

@@ -19,8 +19,8 @@ declare(strict_types=1);
 */
 
 dataset('runner folders', [
-    'scan' => ['src/Scan', ['ClassFacts', 'Glob', 'LastFindings', 'Load', 'ManifestLines', 'PackageNamespaces', 'PhpStanLevel', 'ProjectReads', 'ScanProgress', 'ScanRules', 'SourceFile', 'ToolStatus', 'TypeCoverageCache', 'Walk'], ['Secrets']],
-    'scan tools' => ['src/Scan/Tools', ['ComposerAudit', 'DefinedTool', 'NodeAudit', 'PestArch', 'PhpStan', 'Pint', 'Rector', 'TestSuite', 'Tests', 'Tool', 'Toolbox', 'TypeCoverage'], []],
+    'scan' => ['src/Scan', ['ClassFacts', 'Glob', 'LastFindings', 'Load', 'ManifestLines', 'PackageNamespaces', 'PhpStanLevel', 'ProjectReads', 'ScanProgress', 'ScanRules', 'SourceFile', 'StudioChecks', 'ToolStatus', 'TypeCoverageCache', 'Walk'], ['Secrets']],
+    'scan tools' => ['src/Scan/Tools', ['ComposerAudit', 'DefinedTool', 'NodeAudit', 'PestArch', 'PhpStan', 'Pint', 'Rector', 'StudioRuleset', 'TestSuite', 'Tests', 'Tool', 'Toolbox', 'TypeCoverage'], []],
     'fix' => ['src/Fix', ['AutomatedFixes', 'FixLauncher', 'FixPanel', 'FixProgress', 'FixTimeline', 'LocalBranch', 'RectorRules', 'StudioFixes'], []],
     'fix security' => ['src/Fix/Security', ['TargetedSecurityUpdates'], []],
     'work' => ['src/Work', ['BuildRun', 'EditApplier', 'PhpCheck', 'PrototypeCopy', 'StepChecks', 'TestRunner', 'Timeline', 'WorkLauncher', 'WorkPanel', 'WorkProgress', 'WorkRun'], []],

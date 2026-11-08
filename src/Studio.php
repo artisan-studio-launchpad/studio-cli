@@ -19,6 +19,7 @@ use ArtisanStudio\StudioCli\Saloon\Requests\ReportScanToolProgressRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\RunScanCheckRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\SayGoodbyeRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\ShowConventionDetectorsRequest;
+use ArtisanStudio\StudioCli\Saloon\Requests\ShowScanChecksRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\ShowScanDetectorsRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\ShowScanFixesRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\ShowScanToolsRequest;
@@ -34,6 +35,7 @@ use ArtisanStudio\StudioCli\Saloon\Requests\SubmitScanFlagsRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\SubmitScanToolResultsRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\SubmitScanWorkRequest;
 use ArtisanStudio\StudioCli\Saloon\StudioConnector;
+use ArtisanStudio\StudioCli\Scan\StudioChecks;
 use ArtisanStudio\StudioCli\Scan\Tools\DefinedTool;
 use Closure;
 use RuntimeException;
@@ -224,7 +226,23 @@ class Studio
         $answer = $this->quietly(new ShowScanToolsRequest($this->project()));
         is_array($answer['definitions'] ?? null) && DefinedTool::keep(base_path(), $answer['definitions']);
 
+        $checks = is_array($answer['tools'] ?? null) ? $this->scanChecks() : null;
+        $checks === null || StudioChecks::keep(base_path(), $checks);
+
         return is_array($answer['tools'] ?? null) ? array_values(array_filter($answer['tools'], is_string(...))) : null;
+    }
+
+    /**
+     * The checks the studio runs on this project's files, and the rulesets
+     * each reports into.
+     *
+     * @return list<array<mixed>>|null
+     */
+    public function scanChecks(): ?array
+    {
+        $answer = $this->quietly(new ShowScanChecksRequest($this->project()));
+
+        return is_array($answer['checks'] ?? null) ? array_values(array_filter($answer['checks'], is_array(...))) : null;
     }
 
     /**
