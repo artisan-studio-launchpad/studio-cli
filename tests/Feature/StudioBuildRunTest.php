@@ -370,7 +370,7 @@ it('opens each step\'s files in the developer\'s editor together as soon as they
     Processes::assertRanTimes(fn ($process): bool => str_contains(implode(' ', (array) $process->command), 'phpstorm://open?file=') && str_contains(implode(' ', (array) $process->command), 'CoverageRun.php'), 1);
 });
 
-it('runs only the migrations it added, tells the developer, and says where to open what was built before asking if it works', function (string $up, string $down, bool $runs): void {
+it('asks before it runs the migrations it added, runs only those, never one that drops or renames, and says where to open what was built before asking if it works', function (string $up, string $down, string $decision, bool $asks, bool $runs): void {
     file_put_contents($this->root.'/artisan', "<?php\necho json_encode(['path' => \$argv[2] ?? '', 'status' => 200, 'redirect' => null, 'error' => null, 'where' => null]);\n");
     ($this->git)('add', '-A');
     ($this->git)('commit', '--quiet', '-m', 'artisan');
@@ -381,18 +381,21 @@ it('runs only the migrations it added, tells the developer, and says where to op
     $this->plan['steps'][0]['files'][] = ['path' => $path, 'action' => 'create', 'what' => 'The table.', 'pattern' => ''];
     $this->written[$path] = ['content' => "<?php\n\nuse Illuminate\\Database\\Migrations\\Migration;\nuse Illuminate\\Support\\Facades\\Schema;\n\nreturn new class extends Migration\n{\n    public function up(): void\n    {\n        {$up}\n    }\n\n    public function down(): void\n    {\n        {$down}\n    }\n};\n", 'edits' => [], 'note' => 'The table.'];
 
+    $this->answer = ['decision' => $decision, 'note' => null];
+
     ($this->run)()->run(($this->ask)());
 
-    $reason = collect(($this->sent)('SubmitScanWorkRequest'))->pluck('question.reason')->filter()->first();
+    $questions = collect(($this->sent)('SubmitScanWorkRequest'))->pluck('question')->filter();
 
-    expect($reason)->toContain('Try your app on studio/build-coverage-reports at https://shop.test/coverage-reports, then tell me: does everything work?')
-        ->and($reason)->toContain($runs ? 'I ran php artisan migrate for the migration I added.' : 'which drops or renames something, so I did not run it');
+    expect($questions->pluck('kind')->contains('migrate'))->toBe($asks)
+        ->and($questions->last()['reason'])->toContain('Try your app on studio/build-coverage-reports at https://shop.test/coverage-reports, then tell me: does everything work?');
     $runs
         ? Processes::assertRanTimes(fn ($process): bool => in_array('--path='.$path, (array) $process->command, true) && in_array('migrate', (array) $process->command, true), 1)
         : Processes::assertNotRan(fn ($process): bool => in_array('migrate', (array) $process->command, true));
 })->with([
-    'a table it creates' => ["Schema::create('coverage_runs', fn (\$table) => \$table->id());", "Schema::dropIfExists('coverage_runs');", true],
-    'a column it drops' => ["Schema::table('projects', fn (\$table) => \$table->dropColumn('name'));", "Schema::dropIfExists('coverage_runs');", false],
+    'a table it creates, which the developer allows' => ["Schema::create('coverage_runs', fn (\$table) => \$table->id());", "Schema::dropIfExists('coverage_runs');", 'approve', true, true],
+    'a table it creates, which the developer declines' => ["Schema::create('coverage_runs', fn (\$table) => \$table->id());", "Schema::dropIfExists('coverage_runs');", 'skip', true, false],
+    'a column it drops, which is never run and never offered' => ["Schema::table('projects', fn (\$table) => \$table->dropColumn('name'));", "Schema::dropIfExists('coverage_runs');", 'approve', false, false],
 ]);
 
 it('does not open the files again when it asks again after a fix, since they are open already', function (): void {

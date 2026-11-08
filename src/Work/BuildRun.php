@@ -1337,7 +1337,13 @@ final class BuildRun
         $risky = array_values(array_filter($paths, fn (string $path): bool => preg_match(self::DESTRUCTIVE, (string) preg_replace('/function down\(.*?\n    \}/s', '', (string) file_get_contents($this->root.'/'.$path))) === 1));
 
         if ($risky !== [] || ! is_file($this->root.'/artisan')) {
-            return $risky === [] ? 'I added a migration, so run php artisan migrate first.' : sprintf('I added %s, which drops or renames something, so I did not run it: read it, then run php artisan migrate.', implode(', ', array_map('basename', $risky)));
+            return $risky === [] ? __('studio-cli::build.migrate.no_artisan') : __('studio-cli::build.migrate.risky', ['files' => implode(', ', array_map('basename', $risky))]);
+        }
+
+        $answer = $this->ask(0, $paths, __('studio-cli::build.migrate.ask', ['files' => implode(', ', array_map('basename', $paths))]), '', ['kind' => 'migrate', 'options' => [WorkRun::APPROVE, WorkRun::SKIP]]);
+
+        if (($answer['decision'] ?? null) !== WorkRun::APPROVE || $this->halted()) {
+            return __('studio-cli::build.migrate.left');
         }
 
         $failed = collect($paths)
@@ -1345,8 +1351,8 @@ final class BuildRun
             ->first(fn ($result): bool => ! $result->successful());
 
         return $failed === null
-            ? sprintf('I ran php artisan migrate for the %s I added.', count($paths) === 1 ? 'migration' : 'migrations')
-            : 'I added a migration, but php artisan migrate failed: '.Str::limit(trim($failed->errorOutput() !== '' ? $failed->errorOutput() : $failed->output()), self::LONGEST_FAILURE).' Run it yourself once that is fixed.';
+            ? __('studio-cli::build.migrate.ran')
+            : __('studio-cli::build.migrate.failed', ['reason' => Str::limit(trim($failed->errorOutput() !== '' ? $failed->errorOutput() : $failed->output()), self::LONGEST_FAILURE)]);
     }
 
     /**
