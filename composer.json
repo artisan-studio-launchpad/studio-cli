@@ -1,5 +1,4 @@
 {
-    "$schema": "https://getcomposer.org/schema.json",
     "name": "artisan-studio-projects/studio-cli",
     "description": "Artisan Studio in your terminal: scan your Laravel project on your own machine, follow its fixes and work as they happen, and see your project's health.",
     "keywords": [
@@ -23,6 +22,7 @@
         "ext-dom": "*",
         "ext-mbstring": "*",
         "ext-simplexml": "*",
+        "ext-sodium": "*",
         "illuminate/console": "^12.0||^13.0",
         "illuminate/support": "^12.0||^13.0",
         "laravel/prompts": "^0.3||^1.0",
