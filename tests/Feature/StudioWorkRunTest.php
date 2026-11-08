@@ -915,4 +915,4 @@ it('checks each fix on its own files, then the whole project once at the end, an
     expect($scopes)->toContain(['app/F1.php', 'app/F2.php'])
         ->and(end($scopes))->toBe([])
         ->and($said)->toContain('After all the fixes the whole project check by Studio Scan & Fix also reports 1 new finding (app/Caller.php:3 [broken-call]');
-});
+})->skip('returns when the platform describes an only-the-files-asked tool');

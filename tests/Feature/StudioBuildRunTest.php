@@ -538,7 +538,7 @@ it('sends the signed-off prototype to the studio, waits for the plan of the real
     $this->plan['prototype_component'] = 'App\\Livewire\\Prototype\\CoverageReport';
     $this->plan['steps'] = [$prototype];
     $this->plan['rest'] = 'pending';
-    $planned = [...$this->plan, 'steps' => [$prototype, $tests], 'rest' => 'planned'];
+    $planned = [...$this->plan, 'steps' => [$prototype, $tests], 'rest' => 'planned', 'prototype_stage' => 'failed'];
     Saloon::fake([
         ShowScanWorkRequest::class => function () use ($planned) {
             $asked = collect(($this->sent)('SubmitScanWorkRequest'))->contains(fn (array $report): bool => isset($report['plan_request']));

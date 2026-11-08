@@ -73,7 +73,7 @@ final class ChangelogEntries
             $subject = trim((string) preg_replace('/\s*\(?\[?#\d+\]?\)?$/', '', trim($item['text'])));
 
             $subject === '' || $entries[] = [
-                'hash' => sha1($subject),
+                'hash' => substr(hash('sha256', $subject), 0, 40),
                 'committed_at' => $this->when($date),
                 'scope' => null,
                 'subject' => mb_substr($subject, 0, FeatureCommits::LONGEST_SUBJECT),

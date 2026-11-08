@@ -43,7 +43,13 @@ final class CodexRunner implements Runner
             return Outcome::failed($checked);
         }
 
-        $last = tempnam(sys_get_temp_dir(), 'studio-codex-');
+        $directory = sys_get_temp_dir().'/studio-codex-'.bin2hex(random_bytes(8));
+
+        if (! @mkdir($directory, 0700)) {
+            return Outcome::failed('Codex could not be given a private folder for its answer.');
+        }
+
+        $last = $directory.'/answer.txt';
 
         try {
             $answered = $this->shell->run(
@@ -60,6 +66,7 @@ final class CodexRunner implements Runner
             return $this->outcomeOf($answered, (string) @file_get_contents($last));
         } finally {
             @unlink($last);
+            @rmdir($directory);
         }
     }
 

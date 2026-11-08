@@ -117,7 +117,7 @@ trait StreamsFromTheStudio
         $this->heartbeat();
         method_exists($this, 'timelineSent') && $this->timelineSent();
         method_exists($this, 'stillWriting') && $this->stillWriting();
-        sleep($this->pollSeconds);
+        $this->pollSeconds > 0 ? sleep($this->pollSeconds) : usleep(10_000);
     }
 
     private function heartbeat(): void
