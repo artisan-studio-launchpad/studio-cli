@@ -36,11 +36,42 @@ return [
         ],
         'explain' => [
             'on' => 'The bridge is on. Fixing, working and building run through your Claude Code on this machine.',
-            'key' => 'The bridge is on, and runs on your API key. Fixing, working and building can run.',
-            'off' => 'The bridge is off because you have not allowed it. Scan and the report still work; fixing, working and building wait. Choose the AI bridge below and say yes.',
+            'key' => 'The AI calls run through Artisan Studio with your API key. Fixing, working and building can run.',
+            'consent_not_given' => 'The bridge is off because you have not allowed it. Scan and the report still work; fixing, working and building wait. Choose the AI bridge below and say yes.',
             'stopped' => 'You allowed the bridge, but it is not running. It starts with this screen, so leave this screen open and give it a moment.',
-            'attention' => 'Claude Code is missing or signed out. Install it, or run claude and sign in, and the bridge connects by itself.',
+            'signed_out' => 'No AI is connected: your AI tool is installed, but you are signed out. Fixing, working and building wait. The steps are below.',
+            'not_installed' => 'No AI is connected: no AI tool is installed. Fixing, working and building wait. The steps are below.',
         ],
+    ],
+
+    'block' => [
+        'title' => 'No AI connected',
+        'lead' => 'Fixing, working and building are on hold until an AI is connected. Scan and the report still work.',
+        'recommended' => 'Recommended: install :runners and sign in to your subscription',
+        'runner' => [
+            'not_installed' => ':runner is not installed. Install it, then sign in with :command.',
+            'signed_out' => ':runner is installed, but you are signed out. Run :command and sign in.',
+        ],
+        'reopen' => 'Then reopen the studio screen. The AI runs on this machine, with your subscription.',
+        'key_title' => 'Alternative: add an API key in the app',
+        'key_cost' => 'An API key is billed per token, so it is not the best option. A subscription is recommended to save on token usage.',
+        'key_where' => 'Add the key on this page in Artisan Studio, then come back: :url. This screen never asks for the key or keeps it.',
+        'key_route' => 'With a key, the AI calls run through Artisan Studio with your key.',
+        'unsupported' => 'Other assistants, such as Copilot, are not supported yet.',
+        'coming' => 'Claude Code is supported now, and :runner support is coming soon.',
+        'understood' => 'Got it',
+    ],
+
+    'runner' => [
+        'names' => [
+            'claude' => 'Claude Code',
+            'codex' => 'Codex',
+        ],
+        'commands' => [
+            'claude' => 'claude',
+            'codex' => 'codex login',
+        ],
+        'or' => 'or',
     ],
 
     'setup' => [

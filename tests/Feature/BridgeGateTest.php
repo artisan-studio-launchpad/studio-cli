@@ -4,9 +4,12 @@ declare(strict_types=1);
 
 use ArtisanStudio\StudioCli\Bridge\BridgeBeat;
 use ArtisanStudio\StudioCli\Bridge\BridgeConsent;
+use ArtisanStudio\StudioCli\Bridge\BridgeDetection;
 use ArtisanStudio\StudioCli\Bridge\BridgeGate;
+use ArtisanStudio\StudioCli\Bridge\BridgeKey;
 use ArtisanStudio\StudioCli\Bridge\BridgeNotConnected;
 use ArtisanStudio\StudioCli\Bridge\ClaudeAccount;
+use ArtisanStudio\StudioCli\Bridge\Runners;
 use ArtisanStudio\StudioCli\Bridge\Shell;
 use ArtisanStudio\StudioCli\Fix\LocalBranch;
 use ArtisanStudio\StudioCli\Fix\RectorRules;
@@ -63,7 +66,9 @@ function aGate(?bool $said, bool $installed, bool $signedIn, bool $running): Bri
     @unlink(BridgeBeat::path());
     $running && BridgeBeat::mark();
 
-    return new BridgeGate($consent, aClaudeThatIs($installed, $signedIn));
+    @unlink(BridgeKey::path());
+
+    return new BridgeGate(new BridgeDetection($consent, new Runners(new Shell, aClaudeThatIs($installed, $signedIn))));
 }
 
 /**
@@ -111,7 +116,7 @@ it('is connected only when the developer said yes, Claude Code is installed and 
     'said yes, Claude Code missing' => [true, false, false, true, BridgeGate::ATTENTION],
     'said yes, signed out' => [true, true, false, true, BridgeGate::ATTENTION],
     'not asked yet, Claude Code missing' => [null, false, false, false, BridgeGate::ATTENTION],
-    'declined, Claude Code missing' => [false, false, false, false, BridgeGate::OFF],
+    'declined, Claude Code missing' => [false, false, false, false, BridgeGate::ATTENTION],
 ]);
 
 it('counts a bridge only while it holds the lock, and lets a second one know it is not needed', function (): void {

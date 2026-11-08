@@ -81,6 +81,7 @@ class SettingsCommand extends Command implements ProvidesSettings
                     ]),
                 Text::make(fn (array $state): string => (string) $state['problem'])->colour('rose')->wrap(),
                 Text::make(fn (array $state): string => (string) $state['bridge'])->colour('soft')->wrap(),
+                ...app(BridgeSetup::class)->blockTexts(fn (mixed $state): bool => is_array($state) && ($state['linked'] ?? false) === true),
             ])
             ->actions([
                 Action::make('link')

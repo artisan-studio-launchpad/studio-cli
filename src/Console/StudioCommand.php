@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace ArtisanStudio\StudioCli\Console;
 
 use ArtisanStudio\StudioCli\BackgroundTasks;
+use ArtisanStudio\StudioCli\Bridge\BridgeDetection;
 use ArtisanStudio\StudioCli\Bridge\BridgeGate;
 use ArtisanStudio\StudioCli\Bridge\BridgeKeeper;
 use ArtisanStudio\StudioCli\Bridge\BridgeSetup;
+use ArtisanStudio\StudioCli\Bridge\Runners;
 use ArtisanStudio\StudioCli\Dashboard\DashboardSnapshot;
 use ArtisanStudio\StudioCli\Dashboard\FreshSnapshots;
 use ArtisanStudio\StudioCli\Dashboard\SampleSnapshots;
@@ -69,6 +71,8 @@ class StudioCommand extends Command implements HasScreen
     private bool $askedAboutTheBridge = false;
 
     private ?string $bridgeReported = null;
+
+    private ?string $bridgeDetected = null;
 
     /**
      * @var list<int>
@@ -205,14 +209,50 @@ class StudioCommand extends Command implements HasScreen
 
         $this->askedAboutTheBridge = true;
         $setup = $this->laravel->make(BridgeSetup::class);
+        $this->bridgeDetected = $this->laravel->make(BridgeDetection::class)->state();
 
-        if ($setup->isUndecided() && $setup->notReady() === null) {
-            $this->getScreen()->startSetting('bridge');
+        match (true) {
+            $setup->isBlocked() => $this->getScreen()->openPanel([$setup->blockPanel()]),
+            $setup->isUndecided() && $setup->notReady() === null => $this->getScreen()->startSetting('bridge'),
+            default => null,
+        };
+    }
+
+    /**
+     * Notices that an AI was connected after the block screen, by installing
+     * Claude Code and signing in or by saving a key in the app, on the next
+     * refresh and without a restart: the block screen goes, the question is
+     * asked when it is still open, and the screen says what is connected.
+     */
+    private function followTheBridgeWhenItConnects(): void
+    {
+        if (! $this->askedAboutTheBridge || $this->bridgeDetected === null) {
+            return;
         }
 
-        $missing = $setup->missing();
+        $detection = $this->laravel->make(BridgeDetection::class);
+        $now = $detection->state();
+        $was = $this->bridgeDetected;
 
-        $missing === null || $this->flashScreen((string) __('studio-cli::bridge.consent.not_ready', ['reason' => $missing]));
+        if ($now === $was) {
+            return;
+        }
+
+        $this->bridgeDetected = $now;
+        $setup = $this->laravel->make(BridgeSetup::class);
+        $wasBlocked = in_array($was, [BridgeDetection::SIGNED_OUT, BridgeDetection::NOT_INSTALLED], true);
+
+        if (! $wasBlocked || $detection->isBlocked()) {
+            return;
+        }
+
+        $this->getScreen()->showsPanel() && $this->getScreen()->closeSettings();
+
+        match (true) {
+            $now === BridgeDetection::KEY => $this->flashScreen((string) __('studio-cli::bridge.cli.explain.key')),
+            $setup->isUndecided() && $setup->notReady() === null => $this->getScreen()->startSetting('bridge'),
+            default => null,
+        };
     }
 
     /**
@@ -402,12 +442,14 @@ class StudioCommand extends Command implements HasScreen
     protected function screenRefreshed(): void
     {
         $this->laravel->make(SnapshotSource::class)->forget();
+        $this->laravel->make(Runners::class)->forget();
     }
 
     protected function screenTicked(): void
     {
         $this->askForTheTokenWhenNotLinked();
         $this->askAboutTheBridgeOnce();
+        $this->followTheBridgeWhenItConnects();
         $this->reportTheBridgeWhenItChanges();
         $this->laravel->make(BridgeKeeper::class)->keep();
         $this->openInsightsWhenFixesAreAsked();

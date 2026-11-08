@@ -3,10 +3,13 @@
 declare(strict_types=1);
 
 use ArtisanStudio\StudioCli\Bridge\BridgeConsent;
+use ArtisanStudio\StudioCli\Bridge\BridgeDetection;
 use ArtisanStudio\StudioCli\Bridge\BridgeGate;
 use ArtisanStudio\StudioCli\Bridge\BridgeKeeper;
+use ArtisanStudio\StudioCli\Bridge\BridgeKey;
 use ArtisanStudio\StudioCli\Bridge\BridgeSetup;
 use ArtisanStudio\StudioCli\Bridge\ClaudeAccount;
+use ArtisanStudio\StudioCli\Bridge\Runners;
 use ArtisanStudio\StudioCli\Bridge\Shell;
 use ArtisanStudio\StudioCli\Console\StudioCommand;
 use ArtisanStudio\StudioCli\EnvFile;
@@ -19,6 +22,7 @@ use ArtisanStudio\StudioCli\Terminal\Canvas;
 use ArtisanStudio\StudioCli\Terminal\ScreenContainer;
 use ArtisanStudio\StudioCli\Terminal\Settings;
 use Illuminate\Console\OutputStyle;
+use Illuminate\Support\Facades\Lang;
 use Saloon\Http\Faking\MockResponse;
 use Saloon\Laravel\Facades\Saloon;
 use Symfony\Component\Console\Input\ArrayInput;
@@ -69,7 +73,10 @@ beforeEach(function (): void {
     $this->machine = function (bool $installed = true, bool $signedIn = true): void {
         app()->instance(Shell::class, aMachineWithClaude($installed, $signedIn));
         app()->forgetInstance(ClaudeAccount::class);
+        app()->forgetInstance(Runners::class);
+        app()->forgetInstance(BridgeDetection::class);
         app()->forgetInstance(BridgeSetup::class);
+        @unlink(BridgeKey::path());
         app()->forgetInstance(BridgeKeeper::class);
     };
     $this->told = fn (): array => collect(Saloon::mockClient()->getRecordedResponses())
@@ -169,44 +176,47 @@ it('does not ask when the developer has already said, either way', function (boo
     expect(($this->studio)()->settingsAreOpen())->toBeFalse();
 })->with([true, false]);
 
-it('says what is missing, and that scan and the report still work, when Claude Code is not installed or not signed in, and carries on without the bridge', function (bool $installed, bool $signedIn): void {
+it('shows the block screen when no AI is there to connect, asks nothing, and carries on without the bridge', function (bool $installed, bool $signedIn): void {
     ($this->machine)($installed, $signedIn);
 
     ($this->asks)();
 
-    $flash = (fn (): ?string => $this->screenFlash)->call($this->command);
-
-    expect(($this->studio)()->settingsAreOpen())->toBeFalse()
-        ->and($flash)->toBe(__('studio-cli::bridge.consent.not_ready', ['reason' => app(BridgeSetup::class)->notReady()]))
+    expect(($this->studio)()->showsPanel())->toBeTrue()
+        ->and(app(BridgeSetup::class)->isBlocked())->toBeTrue()
         ->and(BridgeConsent::make()->choice())->toBeNull();
 })->with(['not installed' => [false, false], 'not signed in' => [true, false]]);
 
 /**
  * The bridge in the state given, for the screen to read.
  */
-function theBridgeIs(string $status): void
+function theBridgeIs(string $state): void
 {
-    app()->instance(BridgeGate::class, new class($status) extends BridgeGate
+    $detection = new class($state) extends BridgeDetection
     {
         public function __construct(private readonly string $is) {}
 
-        public function status(): string
+        public function state(): string
         {
             return $this->is;
         }
-    });
+    };
+
+    app()->instance(BridgeDetection::class, $detection);
+    app()->instance(BridgeGate::class, new BridgeGate($detection));
     app()->forgetInstance(BridgeSetup::class);
 }
 
-it('colours the bridge status by state: green when on or on a key, grey when off, amber when it needs attention', function (string $status, string $colour): void {
-    theBridgeIs($status);
+it('colours the bridge status by state: green when on or on a key, grey when off, amber when it needs attention', function (string $state, string $colour): void {
+    theBridgeIs($state);
 
     expect(app(BridgeSetup::class)->footer()['colour'])->toBe($colour);
 })->with([
-    'on' => [BridgeGate::ON, 'green'],
-    'key' => [BridgeSetup::KEY, 'green'],
-    'off' => [BridgeGate::OFF, 'dim'],
-    'needs attention' => [BridgeGate::ATTENTION, 'amber'],
+    'on' => [BridgeDetection::ON, 'green'],
+    'key' => [BridgeDetection::KEY, 'green'],
+    'stopped' => [BridgeDetection::STOPPED, 'dim'],
+    'consent not given' => [BridgeDetection::CONSENT_NOT_GIVEN, 'dim'],
+    'signed out' => [BridgeDetection::SIGNED_OUT, 'amber'],
+    'not installed' => [BridgeDetection::NOT_INSTALLED, 'amber'],
 ]);
 
 it('marks the status with one plain character that is one column wide in any monospace font, never an emoji', function (): void {
@@ -224,7 +234,7 @@ it('has no status row under the heading, so the tabs sit right under it', functi
 });
 
 it('puts the bridge status at the right end of the key hints on the same line, and hides it rather than crowd the keys', function (): void {
-    theBridgeIs(BridgeGate::ATTENTION);
+    theBridgeIs(BridgeDetection::NOT_INSTALLED);
 
     $footer = fn (int $width): string => collect(($this->studio)()->lines($width, 30))->slice(-2, 1)->first();
     $plain = fn (string $line): string => (string) preg_replace(['/\e\[[0-9;?]*[A-Za-z]/', '/\e\]8;[^;\e]*;[^\e]*\e\\\\/'], '', $line);
@@ -273,18 +283,18 @@ it('takes no key for the bridge: s still opens the settings as before', function
     expect(($this->studio)()->settingsAreOpen())->toBeTrue();
 });
 
-it('says what each bridge state means and what to do, in the bridge section of the settings', function (string $status, ?bool $consent, string $says): void {
-    $consent === null || BridgeConsent::make()->{$consent ? 'allow' : 'refuse'}();
-    theBridgeIs($status);
+it('says what each bridge state means and what to do, in the bridge section of the settings', function (string $state): void {
+    theBridgeIs($state);
 
-    expect(app(BridgeSetup::class)->explain())->toBe(__("studio-cli::bridge.cli.explain.{$says}"));
+    expect(app(BridgeSetup::class)->explain())->toBe(__("studio-cli::bridge.cli.explain.{$state}"))
+        ->and(Lang::has("studio-cli::bridge.cli.explain.{$state}"))->toBeTrue();
 })->with([
-    'on' => [BridgeGate::ON, true, 'on'],
-    'on a key' => [BridgeSetup::KEY, null, 'key'],
-    'off, consent not given' => [BridgeGate::OFF, false, 'off'],
-    'off, not asked yet' => [BridgeGate::OFF, null, 'off'],
-    'off, allowed but stopped' => [BridgeGate::OFF, true, 'stopped'],
-    'needs attention' => [BridgeGate::ATTENTION, true, 'attention'],
+    BridgeDetection::ON,
+    BridgeDetection::KEY,
+    BridgeDetection::CONSENT_NOT_GIVEN,
+    BridgeDetection::STOPPED,
+    BridgeDetection::SIGNED_OUT,
+    BridgeDetection::NOT_INSTALLED,
 ]);
 
 it('tells the studio where the bridge stands when it changes, and not again until it does', function (): void {

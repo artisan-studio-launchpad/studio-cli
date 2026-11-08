@@ -9,8 +9,9 @@ namespace ArtisanStudio\StudioCli\Bridge;
  * bridge connected? Without it nothing fixes, writes or builds. Scan, the
  * tools, the report and reading stay open.
  *
- * Connected means all of: the developer said yes, Claude Code is installed
- * and signed in, and the bridge is running.
+ * Connected means either: the developer said yes, a runner such as Claude
+ * Code is installed and signed in, and the bridge is running; or an API key
+ * saved in the app is in use because no runner is ready.
  */
 class BridgeGate
 {
@@ -20,32 +21,28 @@ class BridgeGate
 
     public const string ATTENTION = 'attention';
 
-    public function __construct(
-        private readonly BridgeConsent $consent,
-        private readonly ClaudeAccount $account,
-    ) {}
+    public const string KEY = 'key';
+
+    public function __construct(private readonly BridgeDetection $detection) {}
 
     /**
-     * on: connected. off: declined, not asked yet, or stopped. attention:
-     * Claude Code is missing or signed out.
+     * on: connected through a runner. key: connected through an API key saved
+     * in the app. off: consent not given, or the bridge is stopped. attention:
+     * no runner is installed, or the one that is, is signed out.
      */
     public function status(): string
     {
-        $choice = $this->consent->choice();
-        $claude = $this->account->status();
-
-        return match (true) {
-            $choice === false => self::OFF,
-            ! $claude['installed'] || ! $claude['signed_in'] => self::ATTENTION,
-            $choice === null => self::OFF,
-            BridgeBeat::isRunning() => self::ON,
+        return match ($this->detection->state()) {
+            BridgeDetection::ON => self::ON,
+            BridgeDetection::KEY => self::KEY,
+            BridgeDetection::SIGNED_OUT, BridgeDetection::NOT_INSTALLED => self::ATTENTION,
             default => self::OFF,
         };
     }
 
     public function isConnected(): bool
     {
-        return $this->status() === self::ON;
+        return in_array($this->status(), [self::ON, self::KEY], true);
     }
 
     /**

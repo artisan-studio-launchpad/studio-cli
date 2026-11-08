@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace ArtisanStudio\StudioCli;
 
 use ArtisanStudio\StudioCli\Bridge\BridgeConsent;
+use ArtisanStudio\StudioCli\Bridge\BridgeDetection;
 use ArtisanStudio\StudioCli\Bridge\BridgeKeeper;
 use ArtisanStudio\StudioCli\Bridge\BridgeSetup;
 use ArtisanStudio\StudioCli\Bridge\ClaudeAccount;
+use ArtisanStudio\StudioCli\Bridge\Runners;
 use ArtisanStudio\StudioCli\Console\AvatarSyncCommand;
 use ArtisanStudio\StudioCli\Console\BlueprintCommand;
 use ArtisanStudio\StudioCli\Console\BridgeCommand;
@@ -85,6 +87,10 @@ class StudioCliServiceProvider extends ServiceProvider
         $this->app->bind(BridgeConsent::class, fn (): BridgeConsent => BridgeConsent::make());
 
         $this->app->singleton(ClaudeAccount::class);
+
+        $this->app->singleton(Runners::class);
+
+        $this->app->singleton(BridgeDetection::class);
 
         $this->app->singleton(BridgeSetup::class);
 

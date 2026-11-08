@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ArtisanStudio\StudioCli;
 
+use ArtisanStudio\StudioCli\Bridge\BridgeKey;
 use ArtisanStudio\StudioCli\Saloon\Requests\AuthorizeScanRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\ClaimAiTaskRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\FixScanFilesRequest;
@@ -133,7 +134,11 @@ class Studio
      */
     public function snapshot(): ?array
     {
-        return $this->fetch(new ShowSnapshotRequest($this->project()));
+        $snapshot = $this->fetch(new ShowSnapshotRequest($this->project()));
+
+        $snapshot === null || BridgeKey::remember((bool) ($snapshot['bridge']['key'] ?? false));
+
+        return $snapshot;
     }
 
     /**

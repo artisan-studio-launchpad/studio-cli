@@ -4,6 +4,11 @@ declare(strict_types=1);
 
 namespace ArtisanStudio\StudioCli\Bridge;
 
+use ArtisanStudio\StudioCli\Terminal\Action;
+use ArtisanStudio\StudioCli\Terminal\Components\Text;
+use ArtisanStudio\StudioCli\Terminal\Settings;
+use Closure;
+
 /**
  * What the setup screen and the studio screen say about the AI bridge, and
  * what picking yes or no there does.
@@ -14,8 +19,6 @@ final class BridgeSetup
 
     public const string NO = 'no';
 
-    public const string KEY = 'key';
-
     private const string MARKER = "\u{25C9}";
 
     public function __construct(
@@ -23,6 +26,8 @@ final class BridgeSetup
         private readonly ClaudeAccount $account,
         private readonly BridgeKeeper $keeper,
         private readonly BridgeGate $gate,
+        private readonly BridgeDetection $detection,
+        private readonly Runners $runners,
     ) {}
 
     /**
@@ -34,22 +39,20 @@ final class BridgeSetup
     }
 
     /**
-     * What is missing for Claude Code to run the bridge, or null when it is
+     * What is missing for a runner to run the bridge, or null when one is
      * installed and signed in.
      */
     public function notReady(): ?string
     {
-        $status = $this->account->status();
-
         return match (true) {
-            ! $status['installed'] => __('studio-cli::bridge.setup.not_installed'),
-            ! $status['signed_in'] => __('studio-cli::bridge.setup.not_signed_in'),
-            default => null,
+            $this->runners->hasReady() => null,
+            $this->runners->hasInstalled() => __('studio-cli::bridge.setup.not_signed_in'),
+            default => __('studio-cli::bridge.setup.not_installed'),
         };
     }
 
     /**
-     * The choices the setup screen offers. Claude Code only.
+     * The choices the setup screen offers.
      *
      * @return array<string, string>
      */
@@ -123,7 +126,7 @@ final class BridgeSetup
         return [
             'text' => self::MARKER.' '.__('studio-cli::bridge.cli.bridge.'.$status),
             'colour' => match ($status) {
-                BridgeGate::ON, self::KEY => 'green',
+                BridgeGate::ON, BridgeGate::KEY => 'green',
                 BridgeGate::ATTENTION => 'amber',
                 default => 'dim',
             },
@@ -136,20 +139,101 @@ final class BridgeSetup
      */
     public function explain(): string
     {
-        $status = $this->gate->status();
-
-        return __('studio-cli::bridge.cli.explain.'.match (true) {
-            $status === BridgeGate::OFF && $this->consent->choice() === true => 'stopped',
-            default => $status,
-        });
+        return __('studio-cli::bridge.cli.explain.'.$this->detection->state());
     }
 
     /**
-     * What is missing when the developer has not decided and Claude Code
-     * cannot run the bridge, so the setup says so once and the studio goes on.
+     * What is missing when the developer has not decided and no runner can
+     * run the bridge, so the setup says so once and the studio goes on.
      */
     public function missing(): ?string
     {
         return $this->isUndecided() ? $this->notReady() : null;
+    }
+
+    /**
+     * Whether neither a runner nor an API key is there, so the screen shows
+     * the two ways to get one.
+     */
+    public function isBlocked(): bool
+    {
+        return $this->detection->isBlocked();
+    }
+
+    /**
+     * The block screen as a panel, for when the studio opens with no AI
+     * connected.
+     */
+    public function blockPanel(): Settings
+    {
+        return Settings::make(__('studio-cli::bridge.block.title'))
+            ->components($this->blockTexts())
+            ->actions([Action::make('understood')->label(__('studio-cli::bridge.block.understood'))->closes()->action(fn (): ?string => null)]);
+    }
+
+    /**
+     * The two ways forward, as lines of text that say nothing while a runner
+     * or a key is there: the recommended one, a runner on this machine, then
+     * an API key saved in the app, then what is not supported.
+     *
+     * @param  (Closure(mixed): bool)|null  $visible  asked with the screen's state; null always shows
+     * @return list<Text>
+     */
+    public function blockTexts(?Closure $visible = null): array
+    {
+        $lines = fn (): array => $this->blockLines();
+
+        return array_map(
+            fn (int $index): Text => Text::make(fn (mixed $state): string => $this->isBlocked() && ($visible === null || $visible($state)) ? ($lines()[$index]['text'] ?? '') : '')
+                ->colour(fn (): string => $lines()[$index]['colour'] ?? 'soft')
+                ->bold(($lines()[$index]['bold'] ?? false) === true)
+                ->wrap(),
+            array_keys($this->blockLines()),
+        );
+    }
+
+    /**
+     * @return list<array{text: string, colour: string, bold?: bool}>
+     */
+    private function blockLines(): array
+    {
+        $names = $this->runnerNames();
+
+        return [
+            ['text' => __('studio-cli::bridge.block.lead'), 'colour' => 'amber', 'bold' => true],
+            ['text' => __('studio-cli::bridge.block.recommended', ['runners' => $names]), 'colour' => 'cyan', 'bold' => true],
+            ...array_map(
+                fn (string $runner, array $status): array => ['text' => $this->runnerLine($runner, $status), 'colour' => 'soft'],
+                array_keys($this->runners->statuses()),
+                array_values($this->runners->statuses()),
+            ),
+            ['text' => __('studio-cli::bridge.block.reopen'), 'colour' => 'soft'],
+            ['text' => __('studio-cli::bridge.block.key_title'), 'colour' => 'cyan', 'bold' => true],
+            ['text' => __('studio-cli::bridge.block.key_cost'), 'colour' => 'soft'],
+            ['text' => __('studio-cli::bridge.block.key_where', ['url' => rtrim((string) config('studio-cli.url'), '/').'/settings/claude']), 'colour' => 'soft'],
+            ['text' => __('studio-cli::bridge.block.key_route'), 'colour' => 'soft'],
+            ['text' => __('studio-cli::bridge.block.unsupported'), 'colour' => 'dim'],
+            ...($this->runners->isComing(Runners::CODEX) ? [['text' => __('studio-cli::bridge.block.coming', ['runner' => __('studio-cli::bridge.runner.names.'.Runners::CODEX)]), 'colour' => 'dim']] : []),
+        ];
+    }
+
+    /**
+     * @param  array{installed: bool, signed_in: bool}  $status
+     */
+    private function runnerLine(string $runner, array $status): string
+    {
+        return __('studio-cli::bridge.block.runner.'.($status['installed'] ? 'signed_out' : 'not_installed'), [
+            'runner' => __('studio-cli::bridge.runner.names.'.$runner),
+            'command' => __('studio-cli::bridge.runner.commands.'.$runner),
+        ]);
+    }
+
+    /**
+     * The enabled runners by name, for a sentence: Claude Code, or Claude Code
+     * or Codex.
+     */
+    private function runnerNames(): string
+    {
+        return implode(' '.__('studio-cli::bridge.runner.or').' ', array_map(fn (string $runner): string => __('studio-cli::bridge.runner.names.'.$runner), $this->runners->enabled()));
     }
 }
