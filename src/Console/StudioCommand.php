@@ -444,7 +444,7 @@ class StudioCommand extends Command implements HasScreen
                 fn (DashboardSnapshot $data): string => $data->healthColour(),
             )
             ->aside(fn (DashboardSnapshot $data): string => 'updated '.LocalTime::of($data->takenAt->toIso8601String()))
-            ->notice(fn (): string => app(BridgeSetup::class)->line(), fn (): string => app(BridgeSetup::class)->lineColour())
+            ->footerStatus(fn (): array => app(BridgeSetup::class)->footer(), 'bridge')
             ->openUrl(fn (): string => (string) config('studio-cli.url'))
             ->tabs($studio->tabs())
             ->showTabsAlone()

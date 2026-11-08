@@ -169,6 +169,20 @@ trait HasSettings
         return $this;
     }
 
+    /**
+     * Open the settings with one action chosen, without asking its question yet.
+     */
+    public function focusSetting(string $name): static
+    {
+        $this->openSettings();
+
+        $at = collect($this->settingsActions())->search(fn (array $entry): bool => $entry['action']->getName() === $name);
+
+        $at === false || $this->settingsCursor = (int) $at;
+
+        return $this;
+    }
+
     public function toggleSettings(): static
     {
         return $this->settingsOpen && $this->panel === null ? $this->closeSettings() : $this->openSettings();

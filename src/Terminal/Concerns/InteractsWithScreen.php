@@ -330,6 +330,7 @@ trait InteractsWithScreen
             str_starts_with($action, 'settings:type:') => $this->getScreen()->typeInSettings(substr($action, 14)),
             $action === 'settings:erase' => $this->getScreen()->eraseInSettings(),
             $action === 'settings' => $this->toggleScreenSettings(),
+            $action === 'bridge' => $this->openScreenBridge(),
             $action === 'settings:up' => $this->getScreen()->moveInSettings(-1),
             $action === 'settings:down' => $this->getScreen()->moveInSettings(1),
             $action === 'settings:select' => $this->runScreenSetting($this->getScreen()->selectInSettings()),
@@ -449,6 +450,16 @@ trait InteractsWithScreen
     private function toggleScreenSettings(): void
     {
         $this->getScreen()->toggleSettings();
+        $this->screenHelp = false;
+        $this->screenScroll = 0;
+    }
+
+    /**
+     * The settings, from wherever the screen is, with the bridge row chosen.
+     */
+    private function openScreenBridge(): void
+    {
+        $this->getScreen()->focusSetting('bridge');
         $this->screenHelp = false;
         $this->screenScroll = 0;
     }

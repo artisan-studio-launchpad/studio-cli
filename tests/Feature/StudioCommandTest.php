@@ -149,7 +149,7 @@ it('puts a real View insights link on the health line, and keeps the rest of the
     $text = ($this->visibleText)($summary);
     $from = mb_strpos($text, 'View insights') + 1;
     $to = mb_strpos($text, '↗') + 1;
-    $linked = $lines->filter(fn (string $line): bool => str_contains($line, "\e]8;;") || str_contains($line, '↗'));
+    $linked = $lines->filter(fn (string $line): bool => (str_contains($line, "\e]8;;") && ! str_contains($line, Canvas::ACTION.'bridge')) || str_contains($line, '↗'));
 
     expect($text)->toContain('Health 68%')
         ->and(Canvas::linkAt($summary, $from))->toBe('https://studio.test/insights')

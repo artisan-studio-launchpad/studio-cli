@@ -449,11 +449,25 @@ trait RendersFrame
             ->map(fn (array $key): string => $this->chip($canvas, $key))
             ->implode($canvas->span('   ', 'ink'));
         $keys = Canvas::visibleWidth($chips(true)) <= $inner ? $chips(true) : $chips(false);
+        $status = $this->footerStatusChip($canvas);
+        $right = $status === '' ? $aside : ($aside === '' ? $status : $aside.$canvas->span('   ', 'ink').$status);
+        $right = Canvas::visibleWidth($keys) + 2 + Canvas::visibleWidth($right) <= $inner ? $right : $aside;
 
         return [
             $canvas->row($canvas->span(str_repeat('─', $inner), 'edge'), $width),
-            $canvas->row($canvas->spread($keys, $aside, $inner), $width),
+            $canvas->row($canvas->spread($keys, $right, $inner), $width),
         ];
+    }
+
+    /**
+     * The state at the right end of the key hints, a click target like the
+     * key chips beside it.
+     */
+    private function footerStatusChip(Canvas $canvas): string
+    {
+        $status = $this->getFooterStatus();
+
+        return $status === null ? '' : $canvas->link($canvas->span($status['text'], $status['colour'], bold: true), Canvas::ACTION.$status['action']);
     }
 
     /**

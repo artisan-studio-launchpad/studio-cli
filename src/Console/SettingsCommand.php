@@ -80,6 +80,7 @@ class SettingsCommand extends Command implements ProvidesSettings
                             ->formatStateUsing(fn (string $status): string => $status === '' ? '' : "● {$status}"),
                     ]),
                 Text::make(fn (array $state): string => (string) $state['problem'])->colour('rose')->wrap(),
+                Text::make(fn (array $state): string => (string) $state['bridge'])->colour('soft')->wrap(),
             ])
             ->actions([
                 Action::make('link')
@@ -111,7 +112,7 @@ class SettingsCommand extends Command implements ProvidesSettings
     }
 
     /**
-     * @return array{linked: bool, rows: list<array{label: string, value: string, status: string, colour: string}>, problem: ?string, editors: array<string, string>}
+     * @return array{linked: bool, rows: list<array{label: string, value: string, status: string, colour: string}>, problem: ?string, bridge: string, editors: array<string, string>}
      */
     private function whereThisCheckoutStands(): array
     {
@@ -128,6 +129,7 @@ class SettingsCommand extends Command implements ProvidesSettings
                 ['label' => 'Editor', 'value' => $editor->describe(), 'status' => '', 'colour' => 'dim'],
             ],
             'problem' => $this->problem,
+            'bridge' => $linked ? app(BridgeSetup::class)->explain() : '',
             'editors' => collect(Editor::CHOICES)
                 ->mapWithKeys(fn (string $label, string $key): array => [$key => ($key === $editor->chosen() ? '● ' : '  ').$label])
                 ->all(),

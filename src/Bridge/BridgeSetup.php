@@ -14,6 +14,10 @@ final class BridgeSetup
 
     public const string NO = 'no';
 
+    public const string KEY = 'key';
+
+    private const string MARKER = "\u{25C9}";
+
     public function __construct(
         private readonly BridgeConsent $consent,
         private readonly ClaudeAccount $account,
@@ -107,21 +111,37 @@ final class BridgeSetup
     }
 
     /**
-     * The status line of the studio screen: the CLI is running, and where the
-     * bridge stands beside it.
+     * The bridge's state at the right end of the key hints: a plain marker, one
+     * column wide in any monospace font, and the state in words.
+     *
+     * @return array{text: string, colour: string}
      */
-    public function line(): string
+    public function footer(): array
     {
-        return __('studio-cli::bridge.cli.running').'  │  🌉 '.__('studio-cli::bridge.cli.bridge.'.$this->gate->status());
+        $status = $this->gate->status();
+
+        return [
+            'text' => self::MARKER.' '.__('studio-cli::bridge.cli.bridge.'.$status),
+            'colour' => match ($status) {
+                BridgeGate::ON, self::KEY => 'green',
+                BridgeGate::ATTENTION => 'amber',
+                default => 'dim',
+            },
+        ];
     }
 
-    public function lineColour(): string
+    /**
+     * What the state means and what to do about it, for the bridge section of
+     * the settings.
+     */
+    public function explain(): string
     {
-        return match ($this->gate->status()) {
-            BridgeGate::ON => 'green',
-            BridgeGate::ATTENTION => 'amber',
-            default => 'soft',
-        };
+        $status = $this->gate->status();
+
+        return __('studio-cli::bridge.cli.explain.'.match (true) {
+            $status === BridgeGate::OFF && $this->consent->choice() === true => 'stopped',
+            default => $status,
+        });
     }
 
     /**

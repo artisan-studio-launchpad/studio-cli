@@ -28,11 +28,18 @@ return [
     'blocked' => 'Fixing needs the AI bridge. Turn it on in Settings in php artisan studio.',
 
     'cli' => [
-        'running' => 'CLI running',
         'bridge' => [
             'on' => 'bridge on',
+            'key' => 'bridge on a key',
             'off' => 'bridge off',
             'attention' => 'bridge needs attention',
+        ],
+        'explain' => [
+            'on' => 'The bridge is on. Fixing, working and building run through your Claude Code on this machine.',
+            'key' => 'The bridge is on, and runs on your API key. Fixing, working and building can run.',
+            'off' => 'The bridge is off because you have not allowed it. Scan and the report still work; fixing, working and building wait. Choose the AI bridge below and say yes.',
+            'stopped' => 'You allowed the bridge, but it is not running. It starts with this screen, so leave this screen open and give it a moment.',
+            'attention' => 'Claude Code is missing or signed out. Install it, or run claude and sign in, and the bridge connects by itself.',
         ],
     ],
 

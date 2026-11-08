@@ -28,6 +28,33 @@ trait HasKeys
 
     private string $commandName = 'studio';
 
+    private ?Closure $footerStatus = null;
+
+    private string $footerStatusAction = '';
+
+    /**
+     * A state shown at the right end of the key hints, which a click on it
+     * answers with the action. Hidden when the line has no room for it beside
+     * the keys.
+     *
+     * @param  Closure(): array{text: string, colour: string}  $status
+     */
+    public function footerStatus(Closure $status, string $action): static
+    {
+        $this->footerStatus = $status;
+        $this->footerStatusAction = $action;
+
+        return $this;
+    }
+
+    /**
+     * @return array{text: string, colour: string, action: string}|null
+     */
+    public function getFooterStatus(): ?array
+    {
+        return $this->footerStatus === null ? null : [...($this->footerStatus)(), 'action' => $this->footerStatusAction];
+    }
+
     public function openUrl(string|Closure|null $url): static
     {
         $this->openUrl = $url;

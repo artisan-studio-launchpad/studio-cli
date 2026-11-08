@@ -14,7 +14,10 @@ use ArtisanStudio\StudioCli\Presence;
 use ArtisanStudio\StudioCli\Saloon\Requests\ListProjectsRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\ReportBridgeRequest;
 use ArtisanStudio\StudioCli\Studio;
+use ArtisanStudio\StudioCli\Terminal\Action;
+use ArtisanStudio\StudioCli\Terminal\Canvas;
 use ArtisanStudio\StudioCli\Terminal\ScreenContainer;
+use ArtisanStudio\StudioCli\Terminal\Settings;
 use Illuminate\Console\OutputStyle;
 use Saloon\Http\Faking\MockResponse;
 use Saloon\Laravel\Facades\Saloon;
@@ -178,7 +181,11 @@ it('says what is missing, and that scan and the report still work, when Claude C
         ->and(BridgeConsent::make()->choice())->toBeNull();
 })->with(['not installed' => [false, false], 'not signed in' => [true, false]]);
 
-it('shows CLI running and where the bridge stands beside it: on, off, or needs attention', function (string $status, string $colour): void {
+/**
+ * The bridge in the state given, for the screen to read.
+ */
+function theBridgeIs(string $status): void
+{
     app()->instance(BridgeGate::class, new class($status) extends BridgeGate
     {
         public function __construct(private readonly string $is) {}
@@ -189,13 +196,95 @@ it('shows CLI running and where the bridge stands beside it: on, off, or needs a
         }
     });
     app()->forgetInstance(BridgeSetup::class);
+}
 
-    expect(($this->studio)()->getNotice())->toBe(__('studio-cli::bridge.cli.running').'  │  🌉 '.__('studio-cli::bridge.cli.bridge.'.$status))
-        ->and(($this->studio)()->getNoticeColour())->toBe($colour);
+it('colours the bridge status by state: green when on or on a key, grey when off, amber when it needs attention', function (string $status, string $colour): void {
+    theBridgeIs($status);
+
+    expect(app(BridgeSetup::class)->footer()['colour'])->toBe($colour);
 })->with([
     'on' => [BridgeGate::ON, 'green'],
-    'off' => [BridgeGate::OFF, 'soft'],
+    'key' => [BridgeSetup::KEY, 'green'],
+    'off' => [BridgeGate::OFF, 'dim'],
     'needs attention' => [BridgeGate::ATTENTION, 'amber'],
+]);
+
+it('marks the status with one plain character that is one column wide in any monospace font, never an emoji', function (): void {
+    $marker = mb_substr(app(BridgeSetup::class)->footer()['text'], 0, 1);
+
+    expect(mb_check_encoding($marker, 'UTF-8'))->toBeTrue()
+        ->and(mb_strwidth($marker))->toBe(1)
+        ->and(preg_match('/\p{Extended_Pictographic}/u', $marker))->toBe(0)
+        ->and(ord($marker) > 127 || ctype_print($marker))->toBeTrue()
+        ->and($marker)->not->toBe("\u{FFFD}");
+});
+
+it('has no status row under the heading, so the tabs sit right under it', function (): void {
+    expect(($this->studio)()->getNotice())->toBe('');
+});
+
+it('puts the bridge status at the right end of the key hints on the same line, and hides it rather than crowd the keys', function (): void {
+    theBridgeIs(BridgeGate::ATTENTION);
+
+    $footer = fn (int $width): string => collect(($this->studio)()->lines($width, 30))->slice(-2, 1)->first();
+    $plain = fn (string $line): string => (string) preg_replace(['/\e\[[0-9;?]*[A-Za-z]/', '/\e\]8;[^;\e]*;[^\e]*\e\\\\/'], '', $line);
+    $wide = $footer(120);
+    $shown = collect(range(ScreenContainer::MIN_WIDTH, 120))->mapWithKeys(fn (int $width): array => [$width => str_contains($footer($width), Canvas::ACTION.'bridge')]);
+
+    expect(Canvas::linkAt($wide, mb_strwidth(rtrim($plain($wide)))))->toBe(Canvas::ACTION.'bridge')
+        ->and(Canvas::linkAt($wide, 4))->toBeNull()
+        ->and($shown[ScreenContainer::MIN_WIDTH])->toBeFalse()
+        ->and($shown[120])->toBeTrue()
+        ->and($shown->keys()->every(fn (int $width): bool => mb_strwidth($plain($footer($width))) <= $width))->toBeTrue();
+});
+
+it('opens the settings on the bridge row when the status is clicked, from every screen that shows the key hints', function (string $from): void {
+    match ($from) {
+        'a tab' => null,
+        'another tab' => ($this->press)('2'),
+        'the settings' => ($this->press)('s'),
+        'the help' => ($this->press)('?'),
+        'a panel' => ($this->studio)()->openPanel([Settings::make('Panel')->actions([Action::make('go')->label('Go')->action(fn (): ?string => null)])]),
+    };
+
+    (fn (): int => $this->screenWidthNow = 120)->call($this->command);
+    (fn (): string => $this->screenFrame($this->getScreen(), 30, 121))->call($this->command);
+    $lines = (fn (): array => $this->screenLines)->call($this->command);
+    $row = count($lines) - 1;
+    $plain = (string) preg_replace(['/\e\[[0-9;?]*[A-Za-z]/', '/\e\]8;[^;\e]*;[^\e]*\e\\\\/'], '', $lines[$row - 1]);
+
+    ($this->press)("\e[<0;".mb_strwidth(rtrim($plain)).";{$row}M");
+
+    $screen = ($this->studio)();
+
+    expect(str_contains($lines[$row - 1], Canvas::ACTION.'bridge'))->toBeTrue()
+        ->and($screen->settingsAreOpen())->toBeTrue()
+        ->and($screen->showsPanel())->toBeFalse()
+        ->and((fn (): string => $this->selectedSetting()['action']->getName())->call($screen))->toBe('bridge');
+})->with(['a tab', 'another tab', 'the settings', 'the help', 'a panel']);
+
+it('takes no key for the bridge: s still opens the settings as before', function (): void {
+    ($this->press)('b');
+
+    expect(($this->studio)()->settingsAreOpen())->toBeFalse();
+
+    ($this->press)('s');
+
+    expect(($this->studio)()->settingsAreOpen())->toBeTrue();
+});
+
+it('says what each bridge state means and what to do, in the bridge section of the settings', function (string $status, ?bool $consent, string $says): void {
+    $consent === null || BridgeConsent::make()->{$consent ? 'allow' : 'refuse'}();
+    theBridgeIs($status);
+
+    expect(app(BridgeSetup::class)->explain())->toBe(__("studio-cli::bridge.cli.explain.{$says}"));
+})->with([
+    'on' => [BridgeGate::ON, true, 'on'],
+    'on a key' => [BridgeSetup::KEY, null, 'key'],
+    'off, consent not given' => [BridgeGate::OFF, false, 'off'],
+    'off, not asked yet' => [BridgeGate::OFF, null, 'off'],
+    'off, allowed but stopped' => [BridgeGate::OFF, true, 'stopped'],
+    'needs attention' => [BridgeGate::ATTENTION, true, 'attention'],
 ]);
 
 it('tells the studio where the bridge stands when it changes, and not again until it does', function (): void {
