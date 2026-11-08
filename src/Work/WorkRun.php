@@ -1921,7 +1921,7 @@ final class WorkRun
                 'commit' => $this->lastCommit[$tool] ?? $commit,
                 'took' => 0,
             ]])->all(),
-            'diffs' => $this->base === null ? [] : $this->git->changesSince($this->base),
+            'diffs' => $this->base === null ? [] : $this->git->changesToSend($this->base),
         ]);
 
         $this->studio->submitScanToolResults([

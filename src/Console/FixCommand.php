@@ -126,7 +126,7 @@ class FixCommand extends Command
         $this->foundIn = array_combine($order, array_map(fn (string $key): array => collect($kept->for($key) ?? [])->countBy(fn (array $finding): string => (string) preg_replace('/:\d+$/', '', $finding['where']))->all(), $order));
         $this->progress->begin($started, $order, array_combine($order, array_map(fn (string $key): int => AutomatedFixes::counted($key, $kept->for($key) ?? []), $order)), $base);
         $this->progress->scanned(array_combine($order, array_map(fn (string $key): array => $kept->for($key) ?? [], $order)));
-        $report = fn (): array => ['branch' => $started, 'from' => $from, 'rulesets' => $this->progress?->reports() ?? [], 'diffs' => $base === null ? [] : $branch->changesSince($base)];
+        $report = fn (): array => ['branch' => $started, 'from' => $from, 'rulesets' => $this->progress?->reports() ?? [], 'diffs' => $base === null ? [] : $branch->changesToSend($base)];
 
         $node = in_array(self::NODE, $keys, true) ? $this->beside(self::NODE) : null;
         $own = array_values(array_intersect(AutomatedFixes::own($toolbox), $keys));
@@ -239,7 +239,7 @@ class FixCommand extends Command
     {
         $started = $this->progress?->read()['branch'] ?? $branch->current();
         $base = $this->progress?->read()['base'] ?? null;
-        $report = fn (): array => ['branch' => $started, 'from' => null, 'rulesets' => $this->progress?->reports() ?? [], 'diffs' => $base === null ? [] : $branch->changesSince($base)];
+        $report = fn (): array => ['branch' => $started, 'from' => null, 'rulesets' => $this->progress?->reports() ?? [], 'diffs' => $base === null ? [] : $branch->changesToSend($base)];
 
         array_map(function (string $key) use ($toolbox, $fixes, $branch, $journal, $studio, $report): void {
             $this->settle([$key => $this->fixSecurity($key, $toolbox, $fixes, $branch, $journal)], $studio, $branch, $journal, $report);

@@ -69,6 +69,21 @@ it('leaves the lines of an env file, a key file and a file holding a secret out 
         ->and(SecretLookingFiles::leaks(implode("\n", $found['matches'])))->toBeFalse();
 });
 
+it('leaves the changes to an env file, a key file and a file holding a secret out of the diffs it reports, and keeps them for itself', function (): void {
+    $base = ($this->git)('rev-parse', 'HEAD');
+    foreach (['.env', 'keys/server.pem', 'app/Keys.php', 'app/Fine.php'] as $path) {
+        file_put_contents($this->root.'/'.$path, "\n// changed\n", FILE_APPEND);
+    }
+    file_put_contents($this->root.'/app/Fine.php', "// a plain change\n", FILE_APPEND);
+    ($this->git)('add', '-A');
+    ($this->git)('commit', '--quiet', '-m', 'a fix');
+    $branch = new LocalBranch($this->root);
+
+    expect(array_column($branch->changesSince($base), 'path'))->toEqualCanonicalizing(['.env', 'keys/server.pem', 'app/Keys.php', 'app/Fine.php'])
+        ->and(array_column($branch->changesToSend($base), 'path'))->toBe(['app/Fine.php'])
+        ->and(SecretLookingFiles::leaks(json_encode($branch->changesToSend($base), JSON_THROW_ON_ERROR)))->toBeFalse();
+});
+
 it('sends a described tool\'s config files through the same filter, leaving out a secret by name and one holding a key', function (): void {
     file_put_contents($this->root.'/auth.json', '{"github-oauth":{"github.com":"abc"}}');
     file_put_contents($this->root.'/credentials.json', '{"key":"AKIAABCDEFGHIJKLMNOP"}');

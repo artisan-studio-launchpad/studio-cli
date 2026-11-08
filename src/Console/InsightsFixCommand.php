@@ -271,7 +271,7 @@ class InsightsFixCommand extends Command
             ]])
             ->all();
 
-        $rulesets === [] || $this->studio?->submitScanFixReport(['branch' => $this->run, 'from' => $this->from, 'rulesets' => $rulesets, 'diffs' => $this->base === null ? [] : ($this->git?->changesSince($this->base) ?? [])]);
+        $rulesets === [] || $this->studio?->submitScanFixReport(['branch' => $this->run, 'from' => $this->from, 'rulesets' => $rulesets, 'diffs' => $this->base === null ? [] : ($this->git?->changesToSend($this->base) ?? [])]);
     }
 
     /**

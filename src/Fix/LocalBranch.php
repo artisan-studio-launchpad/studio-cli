@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ArtisanStudio\StudioCli\Fix;
 
+use ArtisanStudio\StudioCli\Scan\ProjectReads;
 use Closure;
 use DateTimeImmutable;
 use DateTimeZone;
@@ -64,6 +65,22 @@ final class LocalBranch
             ->take(self::MOST_PATCHES)
             ->values()
             ->all();
+    }
+
+    /**
+     * The same changes, as they may leave this machine: through the one
+     * filter every file leaves by. A change to a file named like a secret, or
+     * to a file whose patch holds a key or token, is left out. Used for what
+     * is sent in a report; the changes this machine reads for itself stay
+     * whole.
+     *
+     * @return list<array{path: string, patch: string}>
+     */
+    public function changesToSend(string $base): array
+    {
+        $reads = new ProjectReads($this->root);
+
+        return array_values(array_filter($this->changesSince($base), fn (array $change): bool => $reads->mayLeave($change['path']) && ! $reads->holdsSecret($change['patch'])));
     }
 
     /**
