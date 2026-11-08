@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace ArtisanStudio\StudioCli\Bridge;
 
+use ArtisanStudio\StudioCli\ProcessTree;
+use Closure;
 use Symfony\Component\Process\Exception\ProcessTimedOutException;
 use Symfony\Component\Process\ExecutableFinder;
 use Symfony\Component\Process\Process;
@@ -36,6 +38,23 @@ class Shell
         'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'no_proxy', 'all_proxy',
         'SSL_CERT_FILE', 'SSL_CERT_DIR', 'NODE_EXTRA_CA_CERTS', 'REQUESTS_CA_BUNDLE',
     ];
+
+    /**
+     * Asked while a program runs: when it says yes, the program and what it
+     * started are stopped. The bridge uses it to stop its work when the studio
+     * that started it is gone, so nothing is left running on the machine.
+     *
+     * @var (Closure(): bool)|null
+     */
+    private static ?Closure $abortWhen = null;
+
+    /**
+     * @param  (Closure(): bool)|null  $abortWhen
+     */
+    public static function abortWhen(?Closure $abortWhen): void
+    {
+        self::$abortWhen = $abortWhen;
+    }
 
     public function find(string $program): ?string
     {
@@ -78,7 +97,22 @@ class Shell
         $process = new Process($command, $cwd, self::environment(), $input, $timeout);
 
         try {
-            $process->run();
+            $process->start();
+
+            while ($process->isRunning()) {
+                $process->checkTimeout();
+
+                if (self::$abortWhen !== null && (self::$abortWhen)()) {
+                    $pid = $process->getPid();
+
+                    $pid === null || ProcessTree::stop($pid);
+                    $process->stop(1);
+
+                    return ['exit' => 143, 'out' => $process->getOutput(), 'err' => $process->getErrorOutput(), 'timedOut' => false];
+                }
+
+                usleep(100_000);
+            }
         } catch (ProcessTimedOutException) {
             return ['exit' => 124, 'out' => $process->getOutput(), 'err' => $process->getErrorOutput(), 'timedOut' => true];
         }

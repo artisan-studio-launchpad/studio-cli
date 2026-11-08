@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ArtisanStudio\StudioCli\Bridge;
 
+use ArtisanStudio\StudioCli\ProcessTree;
 use Closure;
 use Symfony\Component\Process\Process;
 
@@ -61,7 +62,13 @@ final class BridgeWorkers
 
     public function stop(): void
     {
-        array_map(fn (array $slot) => $slot['process']->stop(2), $this->slots);
+        array_map(function (array $slot): void {
+            $pid = $slot['process']->getPid();
+
+            $pid === null || ProcessTree::stop($pid);
+
+            $slot['process']->stop(2);
+        }, $this->slots);
 
         $this->slots = [];
     }

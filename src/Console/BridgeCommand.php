@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ArtisanStudio\StudioCli\Console;
 
+use ArtisanStudio\StudioCli\BackgroundTasks;
 use ArtisanStudio\StudioCli\Bridge\BridgeBeat;
 use ArtisanStudio\StudioCli\Bridge\BridgeConsent;
 use ArtisanStudio\StudioCli\Bridge\BridgeGate;
@@ -24,9 +25,10 @@ class BridgeCommand extends Command
     public const string SIGNATURE = 'studio:bridge';
 
     protected $signature = self::SIGNATURE.'
-        {--start : Say yes to the AI bridge for this project, then run it}
         {--stop : Say no to the AI bridge for this project, and stop it}
         {--runner=claude : claude. codex is refused unless studio-cli.bridge.codex is turned on}
+        {--parent= : The process id of the studio that started this; the bridge stops when it is gone}
+        {--worker : One of the bridge\'s own workers, which the bridge starts and stops}
         {--plain : Accepted so the studio can start it like its other background tasks}
         {--workers=4 : How many tasks to run at the same time}
         {--once : Run one task and stop, or stop when none comes}
@@ -52,7 +54,7 @@ class BridgeCommand extends Command
 
         $consent = app(BridgeConsent::class);
 
-        if (! $this->option('start') && ! $consent->isAllowed()) {
+        if (! $consent->isAllowed()) {
             $this->components->error(__('studio-cli::bridge.consent.not_given'));
 
             return self::FAILURE;
@@ -64,27 +66,36 @@ class BridgeCommand extends Command
             return self::FAILURE;
         }
 
-        if ($this->option('start')) {
-            $consent->allow();
-            $this->components->info(__('studio-cli::bridge.consent.allowed'));
-        }
+        Shell::abortWhen($this->orphaned(...));
 
-        BridgeBeat::mark();
-        register_shutdown_function(BridgeBeat::unmark(...));
-        $studio->reportBridge(BridgeGate::ON);
+        if (! $this->option('worker')) {
+            if (! BridgeBeat::mark()) {
+                return self::SUCCESS;
+            }
+
+            register_shutdown_function(BridgeBeat::unmark(...));
+            $studio->reportBridge(BridgeGate::ON);
+        }
 
         $log = new BridgeLog(storage_path('studio/bridge'), (bool) config('studio-cli.bridge.debug'));
 
-        if ($this->hasSeveralWorkers()) {
-            return $this->superviseWorkers($runner, $log);
+        try {
+            return $this->hasSeveralWorkers() ? $this->superviseWorkers($log) : $this->loop(new BridgeWorker($studio, $runner, $log));
+        } finally {
+            BridgeBeat::unmark();
+            Shell::abortWhen(null);
         }
+    }
 
-        $worker = new BridgeWorker($studio, $runner, $log);
+    /**
+     * Whether the studio that started this is gone, so nothing is left running
+     * on the machine after a crash or a kill of the screen.
+     */
+    private function orphaned(): bool
+    {
+        $parent = (int) $this->option('parent');
 
-        $this->components->info('Listening for AI tasks from Artisan Studio for this project, through '.$runner->name().' on this machine. Press Ctrl-C to stop.');
-        $this->components->twoColumnDetail('Log of every task', $log->path());
-
-        return $this->loop($worker);
+        return $parent > 0 && ! BackgroundTasks::isAlive($parent);
     }
 
     private function hasSeveralWorkers(): bool
@@ -99,26 +110,28 @@ class BridgeCommand extends Command
 
     /**
      * Runs the workers as processes of this same command, one task each at a
-     * time, and prints what they print.
+     * time. They follow this process: if it goes, they stop. Nothing is printed
+     * while listening; the studio screen shows what it already shows.
      */
-    private function superviseWorkers(Runner $runner, BridgeLog $log): int
+    private function superviseWorkers(BridgeLog $log): int
     {
         $workers = new BridgeWorkers($this->workers(), fn (): Process => new Process(
-            [PHP_BINARY, 'artisan', self::SIGNATURE, '--workers=1', '--runner='.$this->option('runner'), '--interval='.$this->option('interval'), '--plain', '--no-ansi', '--no-interaction'],
+            [PHP_BINARY, 'artisan', self::SIGNATURE, '--workers=1', '--worker', '--parent='.getmypid(), '--runner='.$this->option('runner'), '--interval='.$this->option('interval'), '--plain', '--no-ansi', '--no-interaction'],
             base_path(),
             timeout: null,
         ));
 
         register_shutdown_function($workers->stop(...));
 
-        $this->components->info('Listening for AI tasks from Artisan Studio for this project, through '.$runner->name().' on this machine, '.$this->workers().' at a time. Press Ctrl-C to stop.');
-        $this->components->twoColumnDetail('Log of every task', $log->path());
-
-        while (true) {
-            array_map($this->line(...), $workers->keep());
+        while (! $this->orphaned()) {
+            $workers->keep();
 
             sleep(1);
         }
+
+        $workers->stop();
+
+        return self::SUCCESS;
     }
 
     private function loop(BridgeWorker $worker): int
@@ -126,16 +139,16 @@ class BridgeCommand extends Command
         $startedAt = microtime(true);
         $interval = max(1, (int) $this->option('interval'));
 
-        while (true) {
+        while (! $this->orphaned()) {
             $ran = $worker->tick();
 
             if ($ran !== null) {
-                $this->components->twoColumnDetail(
-                    ($ran['ok'] ? 'Answered ' : 'Could not answer ').substr($ran['id'], -8),
-                    $ran['ms'].' ms'.($ran['ok'] ? '' : ' — '.$ran['error']).($ran['reported'] ? '' : ' (the studio did not take the answer)'),
-                );
-
                 if ($this->option('once')) {
+                    $this->components->twoColumnDetail(
+                        ($ran['ok'] ? 'Answered ' : 'Could not answer ').substr($ran['id'], -8),
+                        $ran['ms'].' ms'.($ran['ok'] ? '' : ' — '.$ran['error']).($ran['reported'] ? '' : ' (the studio did not take the answer)'),
+                    );
+
                     return $ran['ok'] && $ran['reported'] ? self::SUCCESS : self::FAILURE;
                 }
 
@@ -150,6 +163,8 @@ class BridgeCommand extends Command
 
             sleep($interval);
         }
+
+        return self::SUCCESS;
     }
 
     private function runner(Shell $shell): ?Runner

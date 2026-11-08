@@ -94,7 +94,11 @@ class BridgeLog
         foreach (glob($this->directory.'/*.jsonl') ?: [] as $file) {
             if ((int) filemtime($file) < $oldest) {
                 @unlink($file);
+
+                continue;
             }
+
+            @chmod($file, 0600);
         }
     }
 }

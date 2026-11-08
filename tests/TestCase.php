@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ArtisanStudio\StudioCli\Tests;
 
+use ArtisanStudio\StudioCli\Bridge\BridgeBeat;
 use ArtisanStudio\StudioCli\Bridge\BridgeGate;
 use ArtisanStudio\StudioCli\Bridge\Shell;
 use ArtisanStudio\StudioCli\Dashboard\SampleSnapshots;
@@ -77,6 +78,14 @@ abstract class TestCase extends Orchestra
                 return $tab !== WorkPanel::BUILD || in_array($moment, ['prototype', 'working', 'final', 'done', 'halted', 'died'], true);
             }
         });
+    }
+
+    protected function tearDown(): void
+    {
+        BridgeBeat::unmark();
+        Shell::abortWhen(null);
+
+        parent::tearDown();
     }
 
     /**

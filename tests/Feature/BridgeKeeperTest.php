@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use ArtisanStudio\StudioCli\ActivityLog;
 use ArtisanStudio\StudioCli\BackgroundTasks;
+use ArtisanStudio\StudioCli\Bridge\BridgeBeat;
 use ArtisanStudio\StudioCli\Bridge\BridgeConsent;
 use ArtisanStudio\StudioCli\Bridge\BridgeKeeper;
 use ArtisanStudio\StudioCli\Console\BridgeCommand;
@@ -82,6 +83,43 @@ it('starts a command that accepts the flags every background task is started wit
     $options = (new BridgeCommand)->getDefinition();
 
     expect($options->hasOption('plain'))->toBeTrue()
-        ->and($options->hasOption('start'))->toBeTrue()
+        ->and($options->hasOption('worker'))->toBeTrue()
+        ->and($options->hasOption('parent'))->toBeTrue()
         ->and($options->hasOption('stop'))->toBeTrue();
+});
+
+it('starts no second bridge when another studio, or a bridge from before, already runs one', function (): void {
+    $this->consent->allow();
+    $other = fopen(BridgeBeat::path(), 'c');
+    flock($other, LOCK_EX | LOCK_NB);
+
+    ($this->keeper)(true)->keep();
+
+    flock($other, LOCK_UN);
+    fclose($other);
+
+    expect($this->started)->toBe(0);
+
+    ($this->keeper)(true)->keep();
+
+    expect($this->started)->toBe(1);
+});
+
+it('starts the bridge as a child that follows this studio', function (): void {
+    expect(BridgeKeeper::command())->toBe([BridgeCommand::SIGNATURE, '--parent='.getmypid()]);
+});
+
+it('starts a bridge that died again, but not within a minute of the last try', function (): void {
+    $this->consent->allow();
+    $keeper = ($this->keeper)(true);
+
+    $keeper->keep();
+    $keeper->keep();
+
+    expect($this->started)->toBe(1);
+
+    $this->travel(61)->seconds();
+    $keeper->keep();
+
+    expect($this->started)->toBe(2);
 });

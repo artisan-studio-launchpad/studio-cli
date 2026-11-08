@@ -4,7 +4,10 @@ declare(strict_types=1);
 
 use ArtisanStudio\StudioCli\Bridge\BridgeLog;
 use ArtisanStudio\StudioCli\Bridge\Outcome;
+use Illuminate\Contracts\Filesystem\Filesystem;
+use Illuminate\Filesystem\FilesystemManager;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Storage;
 
 /*
 |--------------------------------------------------------------------------
@@ -43,6 +46,35 @@ it('narrows the permissions of a log file that was left open by an earlier versi
 
     expect(decoct(fileperms($log->path()) & 0777))->toBe('600');
 });
+
+it('narrows the permissions of every earlier day\'s file too, not only today\'s', function (): void {
+    mkdir($this->folder, 0755, true);
+    $earlier = $this->folder.'/2026-01-02.jsonl';
+    file_put_contents($earlier, "{}\n");
+    chmod($earlier, 0644);
+    touch($earlier, time() - 86_400);
+
+    (new BridgeLog($this->folder))->note($this->task, 'claude', new Outcome(true, 'pong'), 10);
+
+    expect(decoct(fileperms($earlier) & 0777))->toBe('600');
+});
+
+it('writes a plain local file at its own path and never reaches for a storage disk', function (): void {
+    Storage::fake('local');
+    Storage::fake('s3');
+    $log = new BridgeLog($this->folder);
+
+    $log->note($this->task, 'claude', new Outcome(true, 'pong'), 10);
+
+    expect(is_file($log->path()))->toBeTrue()
+        ->and(str_starts_with($log->path(), $this->folder.'/'))->toBeTrue()
+        ->and(Storage::disk('local')->allFiles())->toBe([])
+        ->and(Storage::disk('s3')->allFiles())->toBe([]);
+});
+
+arch('the bridge log does not use the Storage facade or a configurable disk')
+    ->expect(BridgeLog::class)
+    ->not->toUse([Storage::class, Filesystem::class, FilesystemManager::class]);
 
 it('removes the log files older than fourteen days and keeps the newer ones', function (): void {
     mkdir($this->folder, 0700, true);

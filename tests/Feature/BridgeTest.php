@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use ArtisanStudio\StudioCli\Bridge\BridgeBeat;
 use ArtisanStudio\StudioCli\Bridge\BridgeConsent;
 use ArtisanStudio\StudioCli\Bridge\CodexRunner;
 use ArtisanStudio\StudioCli\Bridge\Limits;
@@ -352,26 +353,55 @@ it('does not start until the developer has said yes', function (?bool $choice): 
     Saloon::assertNothingSent();
 })->with(['no answer yet' => [null], 'a no' => [false]]);
 
-it('says yes with --start, tells the studio, and runs', function (): void {
-    @unlink(BridgeConsent::make()->path());
+it('has no manual start: the studio screen starts it, once the developer said yes', function (): void {
+    $options = (new BridgeCommand)->getDefinition();
+
+    expect($options->hasOption('start'))->toBeFalse()
+        ->and($options->hasOption('parent'))->toBeTrue();
+});
+
+it('tells the studio the bridge is on when it runs', function (): void {
     app()->instance(Shell::class, aMachineWith(['claude'], claudeAnswers($this->pong)));
     Saloon::fake([ClaimAiTaskRequest::class => MockResponse::make('', 204), ReportBridgeRequest::class => MockResponse::make('', 204)]);
 
-    $this->artisan(BridgeCommand::SIGNATURE, ['--start' => true, '--once' => true, '--wait' => 0])->assertSuccessful();
+    $this->artisan(BridgeCommand::SIGNATURE, ['--once' => true, '--wait' => 0])->assertSuccessful();
 
-    expect(BridgeConsent::make()->choice())->toBeTrue();
     Saloon::assertSent(fn ($request): bool => $request instanceof ReportBridgeRequest && $request->body()->all()['state'] === 'on');
 });
 
-it('says nothing with --start when Claude Code is missing, and stays undecided', function (): void {
-    @unlink(BridgeConsent::make()->path());
-    app()->instance(Shell::class, aMachineWith([]));
-    Saloon::fake([ReportBridgeRequest::class => MockResponse::make('', 204)]);
+it('prints nothing while it listens: no banner and no line about the log', function (): void {
+    app()->instance(Shell::class, aMachineWith(['claude'], claudeAnswers($this->pong)));
+    Saloon::fake([ClaimAiTaskRequest::class => MockResponse::make('', 204), ReportBridgeRequest::class => MockResponse::make('', 204)]);
 
-    $this->artisan(BridgeCommand::SIGNATURE, ['--start' => true, '--once' => true])->assertFailed();
+    $this->artisan(BridgeCommand::SIGNATURE, ['--parent' => '2147483646'])
+        ->doesntExpectOutputToContain('Listening')
+        ->doesntExpectOutputToContain('Log of every task')
+        ->assertSuccessful();
+});
 
-    expect(BridgeConsent::make()->choice())->toBeNull();
-    Saloon::assertNothingSent();
+it('starts no second bridge while one is running, and says nothing', function (): void {
+    $other = fopen(BridgeBeat::path(), 'c');
+    flock($other, LOCK_EX | LOCK_NB);
+    app()->instance(Shell::class, aMachineWith(['claude'], claudeAnswers($this->pong)));
+    Saloon::fake([ClaimAiTaskRequest::class => aTask(), ReportBridgeRequest::class => MockResponse::make('', 204)]);
+
+    $this->artisan(BridgeCommand::SIGNATURE, ['--once' => true])->doesntExpectOutputToContain('Answered')->assertSuccessful();
+
+    flock($other, LOCK_UN);
+    fclose($other);
+
+    Saloon::assertNotSent(ClaimAiTaskRequest::class);
+    Saloon::assertNotSent(ReportBridgeRequest::class);
+});
+
+it('stops by itself when the studio that started it is gone', function (): void {
+    app()->instance(Shell::class, aMachineWith(['claude'], claudeAnswers($this->pong)));
+    Saloon::fake([ClaimAiTaskRequest::class => aTask(), ReportBridgeRequest::class => MockResponse::make('', 204)]);
+
+    $this->artisan(BridgeCommand::SIGNATURE, ['--parent' => '2147483646'])->assertSuccessful();
+
+    Saloon::assertNotSent(ClaimAiTaskRequest::class);
+    expect(BridgeBeat::isRunning())->toBeFalse();
 });
 
 it('says no with --stop, tells the studio, and does not run', function (): void {

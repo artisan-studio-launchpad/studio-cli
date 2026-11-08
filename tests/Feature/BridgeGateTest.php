@@ -114,18 +114,40 @@ it('is connected only when the developer said yes, Claude Code is installed and 
     'declined, Claude Code missing' => [false, false, false, false, BridgeGate::OFF],
 ]);
 
-it('forgets a bridge that died without saying so', function (): void {
+it('counts a bridge only while it holds the lock, and lets a second one know it is not needed', function (): void {
     file_put_contents(BridgeBeat::path(), '2147483646');
 
     expect(BridgeBeat::isRunning())->toBeFalse();
 
-    BridgeBeat::mark();
-
-    expect(BridgeBeat::isRunning())->toBeTrue();
+    expect(BridgeBeat::mark())->toBeTrue()
+        ->and(BridgeBeat::isRunning())->toBeTrue();
 
     BridgeBeat::unmark();
 
     expect(BridgeBeat::isRunning())->toBeFalse();
+});
+
+it('forgets a bridge that was killed, because the system lets go of its lock', function (): void {
+    $bridge = new Process([PHP_BINARY, '-r', '$f = fopen($argv[1], "c"); flock($f, LOCK_EX); echo "held\n"; sleep(30);', BridgeBeat::path()]);
+    $bridge->start();
+
+    $deadline = microtime(true) + 5;
+
+    while (! BridgeBeat::isRunning() && microtime(true) < $deadline) {
+        usleep(50_000);
+    }
+
+    expect(BridgeBeat::isRunning())->toBeTrue()
+        ->and(BridgeBeat::mark())->toBeFalse();
+
+    posix_kill((int) $bridge->getPid(), SIGKILL);
+
+    while ($bridge->isRunning()) {
+        usleep(50_000);
+    }
+
+    expect(BridgeBeat::isRunning())->toBeFalse()
+        ->and(BridgeBeat::mark())->toBeTrue();
 });
 
 it('refuses with one line that says how to turn the bridge on, and lets a connected one through', function (): void {
