@@ -7,6 +7,7 @@ namespace ArtisanStudio\StudioCli\Fix;
 use ArtisanStudio\StudioCli\Fix\Security\TargetedSecurityUpdates;
 use ArtisanStudio\StudioCli\Scan\LastFindings;
 use ArtisanStudio\StudioCli\Scan\Tools\Toolbox;
+use ArtisanStudio\StudioCli\StateFile;
 use ArtisanStudio\StudioCli\Studio;
 use Illuminate\Support\Collection;
 
@@ -22,14 +23,7 @@ use Illuminate\Support\Collection;
  */
 final class AutomatedFixes
 {
-    /**
-     * Rules the studio fixes itself, at the lines their tool reported.
-     *
-     * @var list<string>
-     */
-    public const array OWN = ['pest-type-coverage', 'phpstan', self::SECURITY_SCAN, self::ARCH];
-
-    public const string SECURITY_SCAN = 'studio-security';
+    private const string STATE = 'studio-fixes';
 
     public const string ARCH = 'pest-arch';
 
@@ -55,13 +49,27 @@ final class AutomatedFixes
     ) {}
 
     /**
-     * {@see self::OWN}, with the described tools whose findings the studio fixes too.
+     * Keeps the rules the studio says it fixes itself, at the lines their tool
+     * reported, for every command that fixes.
+     *
+     * @param  array<mixed>  $keys
+     */
+    public static function keepStudioFixes(string $root, array $keys): void
+    {
+        @file_put_contents(StateFile::for(self::STATE, $root), (string) json_encode(array_values(array_filter($keys, fn (mixed $key): bool => is_string($key) && preg_match('/^[a-z0-9-]{1,40}$/', $key) === 1))));
+    }
+
+    /**
+     * The rules the studio says it fixes itself, with the described tools
+     * whose findings it fixes too.
      *
      * @return list<string>
      */
     public static function own(?Toolbox $toolbox = null): array
     {
-        return [...self::OWN, ...($toolbox ?? new Toolbox)->fixedByStudio()];
+        $kept = json_decode((string) @file_get_contents(StateFile::for(self::STATE, base_path())), true);
+
+        return array_values(array_unique([...array_filter(is_array($kept) ? $kept : [], is_string(...)), ...($toolbox ?? new Toolbox)->fixedByStudio()]));
     }
 
     /**

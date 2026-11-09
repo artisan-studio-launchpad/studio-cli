@@ -6,6 +6,7 @@ use ArtisanStudio\StudioCli\Fix\AutomatedFixes;
 use ArtisanStudio\StudioCli\Saloon\Requests\FixScanFilesRequest;
 use ArtisanStudio\StudioCli\Scan\LastFindings;
 use ArtisanStudio\StudioCli\Scan\Tools\Toolbox;
+use ArtisanStudio\StudioCli\StateFile;
 use ArtisanStudio\StudioCli\Studio;
 use Saloon\Http\Faking\MockResponse;
 use Saloon\Laravel\Facades\Saloon;
@@ -17,6 +18,11 @@ beforeEach(function (): void {
     file_put_contents($this->root.'/composer.json', (string) json_encode(['require' => ['php' => '^8.4'], 'autoload' => ['psr-4' => ['App\\' => 'app/']]]));
     $this->write = fn (string $path, string $code): int|false => file_put_contents($this->root.'/'.$path, $code);
     $this->read = fn (string $path): string => (string) file_get_contents($this->root.'/'.$path);
+    AutomatedFixes::keepStudioFixes(base_path(), ['pest-type-coverage', 'phpstan', 'studio-security', 'pest-arch']);
+});
+
+afterEach(function (): void {
+    @unlink(StateFile::for('studio-fixes', base_path()));
 });
 
 it('fixes at the scan\'s lines first, then lets Rector and Pint, which need no lines, run whole', function (): void {

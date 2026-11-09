@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ArtisanStudio\StudioCli;
 
 use ArtisanStudio\StudioCli\Bridge\BridgeKey;
+use ArtisanStudio\StudioCli\Fix\AutomatedFixes;
 use ArtisanStudio\StudioCli\Saloon\Requests\AskScanQuestionRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\AuthorizeScanRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\CheckPrototypeClassesRequest;
@@ -324,6 +325,7 @@ class Studio
         is_string($answer['author'] ?? null) && config(['studio-cli.author' => $answer['author']]);
         is_array($answer['rector'] ?? null) && config(['studio-cli.rector' => $answer['rector']]);
         is_array($answer['added'] ?? null) && config(['studio-cli.added' => $answer['added']]);
+        is_array($answer['studio'] ?? null) && AutomatedFixes::keepStudioFixes(base_path(), $answer['studio']);
         is_array($answer['offered'] ?? null) && config(['studio-cli.offered' => array_values(array_filter($answer['offered'], is_string(...)))]);
 
         return is_array($answer['fixes'] ?? null) ? array_values(array_filter($answer['fixes'], is_string(...))) : null;

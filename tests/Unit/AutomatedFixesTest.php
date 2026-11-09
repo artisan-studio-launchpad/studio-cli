@@ -4,10 +4,15 @@ declare(strict_types=1);
 
 use ArtisanStudio\StudioCli\Fix\AutomatedFixes;
 use ArtisanStudio\StudioCli\Fix\LocalBranch;
+use ArtisanStudio\StudioCli\Saloon\Requests\ShowScanFixesRequest;
 use ArtisanStudio\StudioCli\Scan\Tools\DefinedTool;
 use ArtisanStudio\StudioCli\Scan\Tools\Pint;
 use ArtisanStudio\StudioCli\Scan\Tools\Rector;
 use ArtisanStudio\StudioCli\Scan\Tools\Toolbox;
+use ArtisanStudio\StudioCli\StateFile;
+use ArtisanStudio\StudioCli\Studio;
+use Saloon\Http\Faking\MockResponse;
+use Saloon\Laravel\Facades\Saloon;
 use Symfony\Component\Process\Process;
 
 /*
@@ -28,6 +33,29 @@ beforeEach(function (): void {
     $this->fixes = new AutomatedFixes(new Toolbox($this->root), $this->root);
     $this->write = fn (string $path, string $code): int|false => file_put_contents($this->root.'/'.$path, $code);
     $this->read = fn (string $path): string => (string) file_get_contents($this->root.'/'.$path);
+    $this->kept = StateFile::for('studio-fixes', base_path());
+    @unlink($this->kept);
+});
+
+afterEach(function (): void {
+    @unlink($this->kept);
+});
+
+it('fixes with the studio only the rules the studio says it fixes itself, and none before it has said', function (): void {
+    expect(AutomatedFixes::own(new Toolbox($this->root)))->toBe([]);
+
+    AutomatedFixes::keepStudioFixes(base_path(), ['pest-type-coverage', 'studio-performance', '../etc', 7, 'phpstan']);
+
+    expect(AutomatedFixes::own(new Toolbox($this->root)))->toBe(['pest-type-coverage', 'studio-performance', 'phpstan'])
+        ->and($this->fixes->fixable(['studio-performance', 'studio-security', 'pest-type-coverage']))->toBe(['pest-type-coverage', 'studio-performance']);
+});
+
+it('keeps the rules the studio fixes itself when it is asked what to fix', function (): void {
+    Saloon::fake([ShowScanFixesRequest::class => MockResponse::make(['fixes' => ['pint'], 'studio' => ['studio-security', 'studio-performance']])]);
+
+    app(Studio::class)->scanFixes();
+
+    expect(AutomatedFixes::own(new Toolbox($this->root)))->toBe(['studio-security', 'studio-performance']);
 });
 
 it('adds the studio\'s own findings to a rule\'s, only at a plain path inside the project', function (): void {
@@ -54,6 +82,7 @@ it('runs each tool\'s own fixer only when it is set up, Rector and Pint before t
 
     touch($this->root.'/rector.php');
     mkdir($this->root.'/app/Admin', 0755, true);
+    AutomatedFixes::keepStudioFixes(base_path(), ['pest-type-coverage', 'phpstan']);
 
     expect((new Rector)->fixCommand($this->root))->toBe(['vendor/bin/rector', 'process', '--no-progress-bar'])
         ->and($houseCheck->fixCommand($this->root))->toBe(['vendor/bin/house-check', 'app/Admin', '--fix'])

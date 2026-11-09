@@ -8,10 +8,12 @@ use ArtisanStudio\StudioCli\Console\StudioCommand;
 use ArtisanStudio\StudioCli\Dashboard\DashboardSnapshot;
 use ArtisanStudio\StudioCli\Dashboard\FreshSnapshots;
 use ArtisanStudio\StudioCli\Dashboard\SnapshotSource;
+use ArtisanStudio\StudioCli\Fix\AutomatedFixes;
 use ArtisanStudio\StudioCli\Presence;
 use ArtisanStudio\StudioCli\Scan\ScanProgress;
 use ArtisanStudio\StudioCli\Scan\ScanRules;
 use ArtisanStudio\StudioCli\Scan\ToolStatus;
+use ArtisanStudio\StudioCli\StateFile;
 use ArtisanStudio\StudioCli\Terminal\Canvas;
 use ArtisanStudio\StudioCli\Terminal\ScreenContainer;
 use ArtisanStudio\StudioCli\Terminal\Spinner;
@@ -38,10 +40,12 @@ beforeEach(function (): void {
     $this->status = app(ToolStatus::class);
     $this->studio = app(StudioCommand::class)->screen(ScreenContainer::make());
     @unlink($this->status->path());
+    AutomatedFixes::keepStudioFixes(base_path(), ['pest-type-coverage', 'phpstan', 'studio-security', 'pest-arch']);
 });
 
 afterEach(function (): void {
     @unlink($this->status->path());
+    @unlink(StateFile::for('studio-fixes', base_path()));
 });
 
 it('shows how the tests went and offers to install each tool the scan could not run', function (): void {
