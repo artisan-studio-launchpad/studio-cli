@@ -171,3 +171,41 @@ it('puts a question to the studio in rounds, sending only the files it asks for 
         ->and(array_column($rounds[1][1]['files'], 'path'))->toBe(['app/Livewire/Invoice.php'])
         ->and($rounds[1][1]['missing'])->toContain('.env');
 });
+
+it('sends only the permission lists of a settings file when the studio asks for only those, never an env block or another value', function (): void {
+    mkdir($this->root.'/.claude', 0755, true);
+    file_put_contents($this->root.'/.claude/settings.json', (string) json_encode([
+        'env' => ['ANTHROPIC_API_KEY' => 'AKIA'.'ABCDEFGHJKLMNPQR', 'SECRET_NOTE' => 'keep-me-home'],
+        'apiKeyHelper' => '/bin/get-key',
+        'permissions' => ['allow' => ['Bash(ls)'], 'deny' => ['Read(./.env)', 7], 'defaultMode' => 'acceptEdits', 'additionalDirectories' => ['/private']],
+    ]));
+    file_put_contents($this->root.'/.claude/settings.local.json', 'not json at all');
+    $rounds = [];
+    app()->instance(Studio::class, Mockery::mock(Studio::class, function ($studio) use (&$rounds): void {
+        $studio->shouldReceive('askScanQuestion')->andReturnUsing(function (string $question, array $sent) use (&$rounds): array {
+            $rounds[] = $sent;
+
+            return count($rounds) === 1
+                ? ['needs' => ['read' => ['.claude/settings.json', '.claude/settings.local.json'], 'search' => [], 'keep' => ['.claude/settings.json' => ['permissions.allow', 'permissions.deny'], '.claude/settings.local.json' => ['permissions.deny'], '../bad' => ['permissions.deny'], 'x.json' => ['has space']]]]
+                : ['done' => true];
+        });
+    }));
+
+    (new StudioChecks($this->root))->ask('anything', []);
+
+    $sent = collect($rounds[1]['files'])->mapWithKeys(fn (array $file): array => [$file['path'] => base64_decode($file['content'])]);
+
+    expect($sent['.claude/settings.json'])->toBe('{"permissions":{"allow":["Bash(ls)"],"deny":["Read(./.env)"]}}')
+        ->and($sent['.claude/settings.local.json'])->toBe('{}')
+        ->and(json_encode($rounds))->not->toContain('AKIA')->not->toContain('keep-me-home')->not->toContain('/private')->not->toContain('acceptEdits');
+});
+
+it('says why a ruleset left itself out when every one of its checks did, and carries on with the scan', function (): void {
+    StudioChecks::keep($this->root, $this->described);
+    ($this->studio)(fn (): array => ['findings' => [], 'unread' => [], 'skipped' => "Skipped: app holds 6,000 PHP files.\nMore than a round carries."]);
+
+    $result = (new Toolbox($this->root))->check('studio-security');
+
+    expect($result['ran'])->toBeFalse()
+        ->and($result['reason'])->toBe('Skipped: app holds 6,000 PHP files. More than a round carries.');
+});

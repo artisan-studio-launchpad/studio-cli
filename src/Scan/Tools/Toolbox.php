@@ -443,7 +443,7 @@ final class Toolbox
         $unread = $tool->unread($output);
 
         if ($findings === null) {
-            return ['ran' => false, 'reason' => 'Its output could not be read.', 'took' => $took];
+            return ['ran' => false, 'reason' => ($tool instanceof StudioRuleset ? $tool->why() : null) ?? 'Its output could not be read.', 'took' => $took];
         }
 
         $builtOn = $tool instanceof DefinedTool && $tool->buildsOn() ? new PackageNamespaces($this->root) : null;

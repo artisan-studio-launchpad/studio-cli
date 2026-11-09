@@ -78,10 +78,11 @@ final class StudioChecks
 
     /**
      * What every check for a ruleset found there, and the files and rules it
-     * could not read. Null when a check could not be run.
+     * could not read, and the one-line notes of the checks that left
+     * themselves out. Null when a check could not be run.
      *
      * @param  list<string>|null  $only
-     * @return array{findings: list<array{where: string, rule: string, message: string}>, unread: list<array{where: string, rule: string}>}|null
+     * @return array{findings: list<array{where: string, rule: string, message: string}>, unread: list<array{where: string, rule: string}>, skipped: list<string>, checks: int}|null
      */
     public function ruleset(string $ruleset, ?array $only = null): ?array
     {
@@ -101,6 +102,8 @@ final class StudioChecks
                 array_filter($findings, fn (array $finding): bool => $finding['ruleset'] === $ruleset),
             )),
             'unread' => $unread,
+            'skipped' => array_values(array_filter(array_map(fn (array $answer): ?string => $answer['skipped'], $answers))),
+            'checks' => count($checks),
         ];
     }
 
@@ -109,7 +112,7 @@ final class StudioChecks
      * into.
      *
      * @param  list<string>|null  $only
-     * @return array{findings: list<array{where: string, rule: string, message: string, ruleset: string}>, unread: list<array{where: string, rule: string}>}|null
+     * @return array{findings: list<array{where: string, rule: string, message: string, ruleset: string}>, unread: list<array{where: string, rule: string}>, skipped: ?string}|null
      */
     private function once(string $check, ?array $only): ?array
     {
@@ -125,7 +128,7 @@ final class StudioChecks
      * With files named, the studio is told to check only them.
      *
      * @param  list<string>|null  $only
-     * @return array{findings: list<array{where: string, rule: string, message: string, ruleset: string}>, unread: list<array{where: string, rule: string}>}|null
+     * @return array{findings: list<array{where: string, rule: string, message: string, ruleset: string}>, unread: list<array{where: string, rule: string}>, skipped: ?string}|null
      */
     public function run(string $check, ?array $only = null): ?array
     {
@@ -201,7 +204,7 @@ final class StudioChecks
      * the shape every tool's findings have.
      *
      * @param  array<mixed>  $answer
-     * @return array{findings: list<array{where: string, rule: string, message: string, ruleset: string}>, unread: list<array{where: string, rule: string}>}
+     * @return array{findings: list<array{where: string, rule: string, message: string, ruleset: string}>, unread: list<array{where: string, rule: string}>, skipped: ?string}
      */
     private static function report(array $answer): array
     {
@@ -214,6 +217,7 @@ final class StudioChecks
                 fn (array $unread): array => ['where' => $unread['where'], 'rule' => $unread['rule']],
                 array_filter((array) ($answer['unread'] ?? []), fn (mixed $unread): bool => is_array($unread) && is_string($unread['where'] ?? null) && is_string($unread['rule'] ?? null)),
             )),
+            'skipped' => is_string($answer['skipped'] ?? null) && trim($answer['skipped']) !== '' ? mb_substr(trim((string) preg_replace('/\s+/', ' ', $answer['skipped'])), 0, 200) : null,
         ];
     }
 }

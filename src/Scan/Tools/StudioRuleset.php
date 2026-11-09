@@ -19,6 +19,8 @@ final class StudioRuleset extends Tool
      */
     private array $notRead = [];
 
+    private ?string $why = null;
+
     public function __construct(
         private readonly string $ruleset,
         private readonly StudioChecks $checks,
@@ -70,8 +72,18 @@ final class StudioRuleset extends Tool
     {
         $report = $this->checks->ruleset($this->ruleset, $paths === [] ? null : $paths);
         $this->notRead = $report['unread'] ?? [];
+        $this->why = $report !== null && $report['skipped'] !== [] && count($report['skipped']) === $report['checks'] ? implode(' ', $report['skipped']) : null;
 
-        return $report === null ? null : array_map(fn (array $finding): array => $this->finding(...self::parts($finding)), $report['findings']);
+        return $report === null || $this->why !== null ? null : array_map(fn (array $finding): array => $this->finding(...self::parts($finding)), $report['findings']);
+    }
+
+    /**
+     * The studio's one line on why the last run left itself out, when every
+     * one of its checks did.
+     */
+    public function why(): ?string
+    {
+        return $this->why;
     }
 
     public function unread(string $output): array

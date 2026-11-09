@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ArtisanStudio\StudioCli\Scan;
 
 use FilesystemIterator;
+use Illuminate\Support\Arr;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
 use SplFileInfo;
@@ -75,6 +76,11 @@ final class ProjectReads
      */
     private array $allowed = [];
 
+    /**
+     * @var array<string, list<string>>
+     */
+    private array $keeping = [];
+
     public function __construct(
         private readonly string $root,
         private readonly int $mostBytesEachTime = 2_000_000,
@@ -110,6 +116,8 @@ final class ProjectReads
      */
     public function answer(array $needs, array $sent): ?array
     {
+        $this->keepOnly((array) ($needs['keep'] ?? []));
+
         $reads = array_values(array_filter((array) ($needs['read'] ?? []), is_string(...)));
         $searches = array_values(array_filter((array) ($needs['search'] ?? []), fn (mixed $search): bool => is_array($search) && is_string($search['id'] ?? null) && ! isset($this->found[$search['id']])));
 
@@ -150,6 +158,7 @@ final class ProjectReads
         }
 
         $text = (string) @file_get_contents($this->root.'/'.$path);
+        $text = isset($this->keeping[$path]) ? $this->onlyThe($text, $this->keeping[$path]) : $text;
 
         if ($this->holdsSecret($text)) {
             $this->missing[$path] = true;
@@ -158,6 +167,42 @@ final class ProjectReads
         }
 
         return $text;
+    }
+
+    /**
+     * Remembers that the studio wants only some parts of some JSON files, by
+     * dotted path such as `permissions.deny`: whatever else is in the file
+     * stays on this machine. A part counts only when it is a list of strings.
+     *
+     * @param  array<mixed>  $keep
+     */
+    public function keepOnly(array $keep): void
+    {
+        foreach ($keep as $path => $parts) {
+            $valid = is_string($path) && is_array($parts) && array_is_list($parts) && $parts !== [] && collect($parts)->every(fn (mixed $part): bool => is_string($part) && preg_match('/^[A-Za-z0-9_-]{1,40}(\.[A-Za-z0-9_-]{1,40}){0,4}$/', $part) === 1);
+
+            $valid && $this->keeping[$path] = $parts;
+        }
+    }
+
+    /**
+     * The JSON text cut down to the lists at these paths. A file that is not
+     * JSON gives an empty object, so nothing of it is sent.
+     *
+     * @param  list<string>  $parts
+     */
+    private function onlyThe(string $text, array $parts): string
+    {
+        $json = json_decode($text, true);
+        $kept = [];
+
+        foreach ($parts as $part) {
+            $list = is_array($json) ? Arr::get($json, $part) : null;
+
+            is_array($list) && array_is_list($list) && Arr::set($kept, $part, array_values(array_filter($list, is_string(...))));
+        }
+
+        return (string) json_encode((object) $kept, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     }
 
     /**
