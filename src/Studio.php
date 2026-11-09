@@ -7,6 +7,7 @@ namespace ArtisanStudio\StudioCli;
 use ArtisanStudio\StudioCli\Bridge\BridgeKey;
 use ArtisanStudio\StudioCli\Saloon\Requests\AskScanQuestionRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\AuthorizeScanRequest;
+use ArtisanStudio\StudioCli\Saloon\Requests\CheckPrototypeClassesRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\ClaimAiTaskRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\FixScanFilesRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\ListPresenceStatesRequest;
@@ -259,6 +260,20 @@ class Studio
     public function runScanCheck(string $check, array $sent): ?array
     {
         return $this->quietly(new RunScanCheckRequest($this->project(), $check, $sent));
+    }
+
+    /**
+     * Which of the class names a prototype page uses the studio wants checked
+     * against the app's stylesheets. Class names only go to it.
+     *
+     * @param  list<string>  $used
+     * @return list<string>|null
+     */
+    public function prototypeClassesToCheck(array $used): ?array
+    {
+        $answer = $this->quietly(new CheckPrototypeClassesRequest($this->project(), $used));
+
+        return is_array($answer['candidates'] ?? null) ? array_values(array_filter($answer['candidates'], is_string(...))) : null;
     }
 
     /**

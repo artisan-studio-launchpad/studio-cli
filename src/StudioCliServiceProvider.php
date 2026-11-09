@@ -143,6 +143,8 @@ class StudioCliServiceProvider extends ServiceProvider
 
         $this->app->bind('studio-cli.prototype.audit', fn (): Closure => fn (string $url, int $width, int $height): ?array => (new PrototypeShot)->audit($url, $width, $height));
 
+        $this->app->bind('studio-cli.prototype.dom', fn (): Closure => fn (string $url, int $width, int $height): ?string => (new PrototypeShot)->dom($url, $width, $height));
+
         $this->app->bind('studio-cli.prototype.page', fn (): Closure => fn (string $component): mixed => app()->call(app('livewire')->new($component)->__invoke(...)));
     }
 

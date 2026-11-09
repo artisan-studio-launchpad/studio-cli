@@ -6,6 +6,8 @@ use ArtisanStudio\StudioCli\Bridge\BridgeGate;
 use ArtisanStudio\StudioCli\Bridge\BridgeNotConnected;
 use ArtisanStudio\StudioCli\Editor;
 use ArtisanStudio\StudioCli\Fix\LocalBranch;
+use ArtisanStudio\StudioCli\Saloon\Requests\AskScanQuestionRequest;
+use ArtisanStudio\StudioCli\Saloon\Requests\CheckPrototypeClassesRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\ShowScanWorkRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\SubmitScanFixReportRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\SubmitScanToolResultsRequest;
@@ -18,6 +20,7 @@ use ArtisanStudio\StudioCli\Tests\Support\SecretLookingFiles;
 use ArtisanStudio\StudioCli\Work\BuildRun;
 use ArtisanStudio\StudioCli\Work\StepChecks;
 use ArtisanStudio\StudioCli\Work\WorkProgress;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Process as Processes;
 use Saloon\Http\Faking\MockResponse;
 use Saloon\Laravel\Facades\Saloon;
@@ -979,4 +982,59 @@ it('fixes the version of a file that did not compile, and does not start again f
     $kept = (string) file_get_contents($this->root.'/'.$real);
 
     expect($kept)->toContain('@if ($total > 0)')->toContain('@endif');
+});
+
+it('tells the studio only the class names the prototype page uses, and asks the build tool to scan again when the stylesheet lacks one the studio wants checked', function (): void {
+    config(['studio-cli.prototypes.serve' => true, 'app.url' => 'http://app.test']);
+    mkdir($this->root.'/resources/css', 0755, true);
+    touch($this->root.'/resources/css/app.css', time() - 1000);
+    $dom = '<html><head><link rel="stylesheet" href="http://localhost:5173/resources/css/app.css"></head><body class="flex"><p class="items-center">PAGE-TEXT-MUST-STAY</p></body></html>';
+    app()->bind('studio-cli.prototype.dom', fn (): Closure => fn (): string => $dom);
+    Http::fake(['*localhost:5173/*' => Http::sequence()->push('.flex{display:flex}')->push('.flex{display:flex}.items-center{align-items:center}')]);
+    Saloon::fake([ShowScanWorkRequest::class => MockResponse::make(['work' => ['sessions' => [['id' => 0]], 'rechecks' => []]]), CheckPrototypeClassesRequest::class => MockResponse::make(['candidates' => ['items-center']])]);
+    $run = ($this->run)();
+    (new ReflectionProperty($run, 'buildUuid'))->setValue($run, '6f1c2d3e-0000-4000-8000-000000000000');
+    (new ReflectionProperty($run, 'branch'))->setValue($run, 'develop');
+
+    (new ReflectionMethod($run, 'styledNow'))->invoke($run);
+
+    $sent = collect(Saloon::mockClient()->getRecordedResponses())
+        ->filter(fn ($response): bool => $response->getRequest() instanceof CheckPrototypeClassesRequest)
+        ->map(fn ($response): array => $response->getPendingRequest()->body()->all())
+        ->first();
+
+    expect($sent)->toBe(['used' => ['flex', 'items-center']])
+        ->and(filemtime($this->root.'/resources/css/app.css'))->toBeGreaterThan(time() - 100)
+        ->and(json_encode($sent))->not->toContain('PAGE-TEXT-MUST-STAY');
+});
+
+it('does not touch the stylesheet when it already defines what the studio wants checked', function (): void {
+    config(['studio-cli.prototypes.serve' => true, 'app.url' => 'http://app.test']);
+    mkdir($this->root.'/resources/css', 0755, true);
+    touch($this->root.'/resources/css/app.css', time() - 1000);
+    app()->bind('studio-cli.prototype.dom', fn (): Closure => fn (): string => '<html><head><link rel="stylesheet" href="http://localhost:5173/resources/css/app.css"></head><body class="items-center"></body></html>');
+    Http::fake(['*localhost:5173/*' => Http::response('.items-center{align-items:center}')]);
+    Saloon::fake([ShowScanWorkRequest::class => MockResponse::make(['work' => ['sessions' => [['id' => 0]], 'rechecks' => []]]), CheckPrototypeClassesRequest::class => MockResponse::make(['candidates' => ['items-center']])]);
+    $run = ($this->run)();
+    (new ReflectionProperty($run, 'buildUuid'))->setValue($run, '6f1c2d3e-0000-4000-8000-000000000000');
+    (new ReflectionProperty($run, 'branch'))->setValue($run, 'develop');
+
+    (new ReflectionMethod($run, 'styledNow'))->invoke($run);
+
+    expect(filemtime($this->root.'/resources/css/app.css'))->toBeLessThan(time() - 500);
+});
+
+it('asks the studio about the components in the views a step wrote, and adds what it says to the error', function (): void {
+    mkdir($this->root.'/resources/views/livewire', 0755, true);
+    file_put_contents($this->root.'/resources/views/livewire/page.blade.php', '<x-card.box :items="$items" />');
+    Saloon::fake([AskScanQuestionRequest::class => MockResponse::make(['misused' => ['<x-card.box> is given :items.', 7]])]);
+    $run = ($this->run)();
+
+    $said = (new ReflectionMethod($run, 'componentsMisused'))->invoke($run, [['path' => 'resources/views/livewire/page.blade.php', 'action' => 'create', 'what' => '', 'pattern' => ''], ['path' => 'app/Models/User.php', 'action' => 'change', 'what' => '', 'pattern' => '']]);
+
+    expect($said)->toBe("\n\n<x-card.box> is given :items.");
+
+    Saloon::fake([AskScanQuestionRequest::class => MockResponse::make([], 500)]);
+
+    expect((new ReflectionMethod($run, 'componentsMisused'))->invoke($run, [['path' => 'resources/views/livewire/page.blade.php', 'action' => 'create', 'what' => '', 'pattern' => '']]))->toBe('');
 });

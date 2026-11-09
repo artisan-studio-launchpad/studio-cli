@@ -7,17 +7,21 @@ namespace ArtisanStudio\StudioCli\Work;
 use ArtisanStudio\StudioCli\Bridge\BridgeGate;
 use ArtisanStudio\StudioCli\Editor;
 use ArtisanStudio\StudioCli\Fix\LocalBranch;
+use ArtisanStudio\StudioCli\Prototype\PageClasses;
 use ArtisanStudio\StudioCli\Prototype\Prototypes;
 use ArtisanStudio\StudioCli\Says;
 use ArtisanStudio\StudioCli\Scan\ProjectReads;
+use ArtisanStudio\StudioCli\Scan\StudioChecks;
 use ArtisanStudio\StudioCli\Studio;
 use ArtisanStudio\StudioCli\TaskJournal;
 use ArtisanStudio\StudioCli\Work\Concerns\AsksTheDeveloper;
 use ArtisanStudio\StudioCli\Work\Concerns\ChecksTheMachine;
 use ArtisanStudio\StudioCli\Work\Concerns\ReportsToTheStudio;
 use ArtisanStudio\StudioCli\Work\Concerns\StreamsFromTheStudio;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Str;
+use Throwable;
 
 /**
  * Builds an idea planned in the studio, on a new local branch: step by step
@@ -71,6 +75,8 @@ final class BuildRun
     private const string DESTRUCTIVE = '/->(?:dropColumns?|dropIfExists|drop|renameColumn|rename|dropForeign|dropPrimary|dropUnique|dropIndex)\(|Schema::(?:drop|dropIfExists|rename)\(|DB::(?:statement|unprepared)\(|truncate\(/';
 
     private const int LOOK_TRIES = 1;
+
+    private const int STYLE_WAITS = 8;
 
     private const int SHOT_WIDTH = 1440;
 
@@ -307,8 +313,93 @@ final class BuildRun
     private function checkedPrototype(array $step, string $at): string
     {
         $at = $this->rendered($step, $at, self::PROTOTYPE_RENDER_TRIES);
+        $this->styled();
 
         return $this->looked($step, $at, self::LOOK_TRIES);
+    }
+
+    /**
+     * Looks, in a browser, for classes the page uses that its stylesheet does
+     * not have, which is what a new file is until the build tool has scanned
+     * it. Only the class names the page uses go to the studio, which says
+     * which are worth checking; the page and the stylesheets stay here. It
+     * asks the dev server to scan again by touching the stylesheet's source,
+     * and says so when the page may still be drawn without them.
+     */
+    private function styled(): void
+    {
+        $this->timed('style', __('studio-cli::build.styles.timing'), fn () => $this->styledNow());
+    }
+
+    private function styledNow(): void
+    {
+        if ($this->kept || $this->prototypeBroken !== null || $this->buildUuid === null || $this->halted() || ! Prototypes::served() || ! (bool) config('studio-cli.prototypes.styles', true) || ! str_starts_with((string) config('app.url'), 'http')) {
+            return;
+        }
+
+        $page = rtrim((string) config('app.url'), '/').'/prototype/'.$this->buildUuid;
+        $dom = app('studio-cli.prototype.dom')($page, self::SHOT_WIDTH, self::SHOT_HEIGHT);
+        $classes = new PageClasses($this->stylesheet(...));
+        $sheets = $dom === null ? [] : $classes->sheetsOf($dom, $page);
+        $defined = $sheets === [] ? [] : $classes->definedIn($sheets);
+        $candidates = $defined === [] ? [] : ($this->studio->prototypeClassesToCheck($classes->usedIn((string) $dom)) ?? []);
+        $missing = array_values(array_filter($candidates, fn (string $class): bool => ! isset($defined[$class])));
+
+        if ($missing === []) {
+            return;
+        }
+
+        $touched = array_map(fn (string $file): bool => touch($file), $classes->entries($sheets, $this->root));
+        $left = $missing;
+        $touched === [] || collect(range(1, self::STYLE_WAITS))->first(function () use ($classes, $sheets, &$left): bool {
+            sleep(1);
+            $defined = $classes->definedIn($sheets);
+            $left = array_values(array_filter($left, fn (string $class): bool => ! isset($defined[$class])));
+
+            return $left === [];
+        });
+
+        $this->say($left === []
+            ? trans_choice('studio-cli::build.styles.fixed', count($missing), ['count' => count($missing)])
+            : __('studio-cli::build.styles.still', ['classes' => implode(', ', array_slice($left, 0, 6)).(count($left) > 6 ? ' '.__('studio-cli::build.styles.more', ['count' => count($left) - 6]) : '')]));
+    }
+
+    /**
+     * A stylesheet's text, only from the app itself or a dev server on this
+     * machine.
+     */
+    private function stylesheet(string $url): ?string
+    {
+        $host = (string) parse_url($url, PHP_URL_HOST);
+        $allowed = in_array($host, ['localhost', '127.0.0.1', '::1', '[::1]'], true) || $host === (string) parse_url((string) config('app.url'), PHP_URL_HOST);
+
+        if (! $allowed) {
+            return null;
+        }
+
+        try {
+            $response = Http::timeout(10)->withoutVerifying()->get($url);
+
+            return $response->successful() ? $response->body() : null;
+        } catch (Throwable) {
+            return null;
+        }
+    }
+
+    /**
+     * What the studio says about the components these views give an attribute
+     * they do not declare as a prop. It asks this machine only which props
+     * each component declares, by name.
+     *
+     * @param  list<PlannedFile>  $files
+     */
+    private function componentsMisused(array $files): string
+    {
+        $views = collect($files)->pluck('path')->filter(fn (string $path): bool => str_ends_with($path, '.blade.php') && is_file($this->root.'/'.$path))->values()->all();
+        $answer = $views === [] ? null : (new StudioChecks($this->root, $this->studio))->ask('component-props', $views);
+        $misused = collect(is_array($answer['misused'] ?? null) ? $answer['misused'] : [])->filter(fn (mixed $line): bool => is_string($line))->unique();
+
+        return $misused->isEmpty() ? '' : "\n\n".$misused->implode("\n");
     }
 
     /**
@@ -678,7 +769,7 @@ final class BuildRun
 
         $this->say(sprintf('%s does not render: %s. I’m fixing it.', $opened['path'], rtrim($error, '.')));
         $files = $tries === self::PROTOTYPE_RENDER_TRIES ? $this->filesNamed($step, [$error]) : $step['files'];
-        $this->written($step['number'], $files, 'Opening '.$opened['path'].' in the app failed with: '.$error);
+        $this->written($step['number'], $files, 'Opening '.$opened['path'].' in the app failed with: '.$error.$this->componentsMisused($step['files']));
 
         return $this->rendered($step, $at, $tries - 1);
     }

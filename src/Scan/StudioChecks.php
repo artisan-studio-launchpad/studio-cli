@@ -167,21 +167,25 @@ final class StudioChecks
     private function rounds(ProjectReads $reads, Closure $send): ?array
     {
         $sent = [];
+        $declared = [];
 
         for ($round = 1; $round <= self::MOST_ROUNDS; $round++) {
-            $answer = $send(['files' => $this->files($reads, $sent), 'missing' => $reads->missing(), 'found' => (object) $reads->found()]);
+            $answer = $send(['files' => $this->files($reads, $sent), 'missing' => $reads->missing(), 'found' => (object) $reads->found(), 'props' => array_values($declared)]);
 
             if (! is_array($answer) || ! array_key_exists('needs', $answer)) {
                 return $answer;
             }
 
-            $more = $reads->answer((array) $answer['needs'], $sent);
+            $needs = (array) $answer['needs'];
+            $asked = collect((array) ($needs['props'] ?? []))->filter(fn (mixed $name): bool => is_string($name) && preg_match(ComponentFacts::NAME, $name) === 1 && ! isset($declared[$name]))->unique()->values();
+            $declared = [...$declared, ...$asked->mapWithKeys(fn (string $name): array => [$name => ['name' => $name, ...(ComponentFacts::declared($name, $this->root) ?? [])]])->all()];
+            $more = $reads->answer($needs, $sent);
 
-            if ($more === null) {
+            if ($more === null && $asked->isEmpty()) {
                 return null;
             }
 
-            $sent = [...$sent, ...$more];
+            $sent = [...$sent, ...($more ?? [])];
         }
 
         return null;

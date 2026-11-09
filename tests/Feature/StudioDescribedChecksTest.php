@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use ArtisanStudio\StudioCli\Saloon\Requests\CheckPrototypeClassesRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\ShowScanChecksRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\ShowScanToolsRequest;
 use ArtisanStudio\StudioCli\Scan\StudioChecks;
@@ -10,6 +11,7 @@ use ArtisanStudio\StudioCli\Scan\Tools\Toolbox;
 use ArtisanStudio\StudioCli\StateFile;
 use ArtisanStudio\StudioCli\Studio;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\View;
 use Saloon\Http\Faking\MockResponse;
 use Saloon\Laravel\Facades\Saloon;
 
@@ -208,4 +210,37 @@ it('says why a ruleset left itself out when every one of its checks did, and car
 
     expect($result['ran'])->toBeFalse()
         ->and($result['reason'])->toBe('Skipped: app holds 6,000 PHP files. More than a round carries.');
+});
+
+it('answers what a component declares by name when the studio asks, and sends only names back', function (): void {
+    $views = sys_get_temp_dir().'/props-views-'.bin2hex(random_bytes(4));
+    mkdir($views.'/components', 0755, true);
+    file_put_contents($views.'/components/plain.blade.php', "@props(['count'])\n<div>SECRET-BODY</div>\n");
+    View::addLocation($views);
+    $rounds = [];
+    app()->instance(Studio::class, Mockery::mock(Studio::class, function ($studio) use (&$rounds): void {
+        $studio->shouldReceive('askScanQuestion')->andReturnUsing(function (string $question, array $sent) use (&$rounds): array {
+            $rounds[] = $sent;
+
+            return count($rounds) === 1
+                ? ['needs' => ['read' => [], 'search' => [], 'props' => ['plain', 'missing-one', 'bad name!']]]
+                : ['misused' => []];
+        });
+    }));
+
+    (new StudioChecks($this->root))->ask('component-props', []);
+
+    expect($rounds[0]['props'])->toBe([])
+        ->and($rounds[1]['props'])->toBe([['name' => 'plain', 'path' => 'plain.blade.php', 'props' => ['count']], ['name' => 'missing-one']])
+        ->and(json_encode($rounds))->not->toContain('SECRET-BODY');
+});
+
+it('tells the studio only the class names a prototype page uses', function (): void {
+    Saloon::fake([CheckPrototypeClassesRequest::class => MockResponse::make(['candidates' => ['items-center', 7]])]);
+
+    $candidates = app(Studio::class)->prototypeClassesToCheck(['flex', 'items-center']);
+    $body = Saloon::mockClient()->getRecordedResponses()[0]->getPendingRequest()->body()->all();
+
+    expect($candidates)->toBe(['items-center'])
+        ->and($body)->toBe(['used' => ['flex', 'items-center']]);
 });
