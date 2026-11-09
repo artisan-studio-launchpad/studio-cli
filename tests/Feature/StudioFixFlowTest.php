@@ -7,9 +7,11 @@ use ArtisanStudio\StudioCli\BackgroundTasks;
 use ArtisanStudio\StudioCli\Console\StudioCommand;
 use ArtisanStudio\StudioCli\Dashboard\DashboardSnapshot;
 use ArtisanStudio\StudioCli\Dashboard\SnapshotSource;
+use ArtisanStudio\StudioCli\Fix\AutomatedFixes;
 use ArtisanStudio\StudioCli\Fix\FixLauncher;
 use ArtisanStudio\StudioCli\Fix\FixProgress;
 use ArtisanStudio\StudioCli\Presence;
+use ArtisanStudio\StudioCli\Scan\ScanRules;
 use ArtisanStudio\StudioCli\Scan\Tools\DefinedTool;
 use ArtisanStudio\StudioCli\Scan\ToolStatus;
 use ArtisanStudio\StudioCli\Terminal\ScreenContainer;
@@ -38,6 +40,13 @@ beforeEach(function (): void {
     file_put_contents($this->root.'/vendor/bin/pint', '');
     DefinedTool::keep($this->root, [['key' => 'house-check', 'name' => 'House check', 'bin' => 'house-check']]);
     app()->setBasePath($this->root);
+    AutomatedFixes::keepStudioFixes($this->root, ['pest-type-coverage', 'phpstan', 'studio-security', 'pest-arch']);
+    ScanRules::keep($this->root, [
+        ['name' => 'Initial', 'tools' => ['tests']],
+        ['name' => 'Defaults', 'tools' => ['pint', 'rector', 'composer-audit', 'node-audit']],
+        ['name' => 'Studio', 'tools' => ['studio-security']],
+        ['name' => 'Advanced', 'tools' => ['phpstan', 'pest-type-coverage', 'pest-arch', 'pest-coverage']],
+    ]);
     app()->instance(BackgroundTasks::class, new BackgroundTasks($this->root, app(ActivityLog::class)));
     app()->instance(SnapshotSource::class, new class implements SnapshotSource
     {
