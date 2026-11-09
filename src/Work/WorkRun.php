@@ -10,6 +10,7 @@ use ArtisanStudio\StudioCli\Fix\LocalBranch;
 use ArtisanStudio\StudioCli\Says;
 use ArtisanStudio\StudioCli\Scan\LastFindings;
 use ArtisanStudio\StudioCli\Scan\ProjectReads;
+use ArtisanStudio\StudioCli\Scan\StudioChecks;
 use ArtisanStudio\StudioCli\Scan\Tools\Tests;
 use ArtisanStudio\StudioCli\Scan\Tools\Toolbox;
 use ArtisanStudio\StudioCli\Studio;
@@ -1145,7 +1146,7 @@ final class WorkRun
         $request = random_int(1, 2_000_000_000);
         $this->prefetchingNow || $this->prefetched = null;
         $parts = $this->parts($sent);
-        $related = $kind === self::FIXES ? $this->dependedOn($fits) : [];
+        $related = $kind === self::FIXES ? $this->dependedOn($fits) : ($kind === self::TESTS ? $this->builtFrom($fits) : []);
         $this->step(sprintf($kind === self::TESTS ? 'Writing tests for %d %s at once…' : 'Fixing %d %s at once…', count($sent), count($sent) === 1 ? 'file' : 'files'));
 
         $taken = array_map(fn (array $part, int $index): ?array => $this->studio->submitScanWork(['session' => $this->session, 'propose' => [
@@ -1297,10 +1298,53 @@ final class WorkRun
      */
     private function dependedOn(array $sent): array
     {
+        $told = $this->studioSays('depends-on', array_keys($sent));
         $needs = collect($sent)->map(fn (string $content, string $path): array => $this->job === self::FAILING_TESTS
-            ? $this->withinBudget(array_values(array_unique([...$this->wanted[$path] ?? [], ...$this->showing($path)])))
-            : []);
+            ? $this->withinBudget(array_values(array_unique([...$this->wanted[$path] ?? [], ...$this->showing($path), ...($told[$path] ?? [])])))
+            : ($told[$path] ?? []));
         $this->given = [...$this->given, ...$needs->all()];
+
+        return $this->readBeside($needs->all(), $sent);
+    }
+
+    /**
+     * The models, factories and services a test for each sent file builds
+     * from, as the studio names them, read only, so a test is written from
+     * what is there and not from a guess.
+     *
+     * @param  array<string, string>  $sent
+     * @return list<array{path: string, content: string, for: list<string>}>
+     */
+    private function builtFrom(array $sent): array
+    {
+        return $this->readBeside($this->studioSays('test-builds-from', array_keys($sent)), $sent);
+    }
+
+    /**
+     * What the studio says to read beside these files, for each of them.
+     * Only paths come back from it.
+     *
+     * @param  list<string>  $paths
+     * @return array<string, list<string>>
+     */
+    private function studioSays(string $question, array $paths): array
+    {
+        $answer = (new StudioChecks($this->root, $this->studio))->ask($question, $paths);
+
+        return collect(is_array($answer['related'] ?? null) ? $answer['related'] : [])
+            ->filter(fn (mixed $files, mixed $path): bool => is_string($path) && is_array($files))
+            ->map(fn (array $files): array => array_values(array_filter($files, is_string(...))))
+            ->all();
+    }
+
+    /**
+     * @param  array<string, list<string>>  $beside  the files to read, for each sent file
+     * @param  array<string, string>  $sent
+     * @return list<array{path: string, content: string, for: list<string>}>
+     */
+    private function readBeside(array $beside, array $sent): array
+    {
+        $needs = collect($beside);
         $wanted = $needs->flatten()->unique()->reject(fn (string $path): bool => isset($sent[$path]))->values()->all();
         $texts = collect($this->git->tracked($wanted))
             ->mapWithKeys(fn (string $path): array => [$path => filesize($this->root.'/'.$path) <= self::LARGEST_FILE ? $this->reads()->readable($path) : null])

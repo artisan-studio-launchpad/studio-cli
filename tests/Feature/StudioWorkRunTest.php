@@ -5,6 +5,7 @@ declare(strict_types=1);
 use ArtisanStudio\StudioCli\Bridge\BridgeGate;
 use ArtisanStudio\StudioCli\Bridge\BridgeNotConnected;
 use ArtisanStudio\StudioCli\Fix\LocalBranch;
+use ArtisanStudio\StudioCli\Saloon\Requests\AskScanQuestionRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\ShowScanWorkRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\SubmitScanFixReportRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\SubmitScanToolResultsRequest;
@@ -967,3 +968,52 @@ it('checks each fix on its own files, then the whole project once at the end, an
         ->and(end($scopes))->toBe([])
         ->and($said)->toContain('After all the fixes the whole project check by Studio Scan & Fix also reports 1 new finding (app/Caller.php:3 [broken-call]');
 })->skip('returns when the platform describes an only-the-files-asked tool');
+
+it('reads beside a sent file what the studio says it depends on, never a secret, and sends them with the file they are for', function (): void {
+    SecretLookingFiles::plant($this->root);
+    mkdir($this->root.'/resources/views/livewire', 0755, true);
+    file_put_contents($this->root.'/resources/views/livewire/f1.blade.php', "<div wire:model=\"note\"></div>\n");
+    ($this->git)('add', '-A');
+    ($this->git)('commit', '--quiet', '-m', 'a view and files that look like secrets');
+    $asked = [];
+    Saloon::fake([AskScanQuestionRequest::class => function ($pending) use (&$asked) {
+        $body = $pending->body()->all();
+        $asked[] = [class_basename($pending->getRequest()), $pending->getRequest()->resolveEndpoint(), $body];
+
+        return MockResponse::make(['related' => ['app/F1.php' => ['resources/views/livewire/f1.blade.php', ...SecretLookingFiles::REFUSED, 'app/Untracked.php', 42]]]);
+    }]);
+    $run = ($this->run)();
+
+    $related = (new ReflectionMethod($run, 'dependedOn'))->invoke($run, ['app/F1.php' => "<?php\n"]);
+
+    expect($related)->toBe([['path' => 'resources/views/livewire/f1.blade.php', 'content' => "<div wire:model=\"note\"></div>\n", 'for' => ['app/F1.php']]])
+        ->and($asked[0][1])->toEndWith('/scan/questions/depends-on')
+        ->and($asked[0][2]['about'])->toBe(['app/F1.php'])
+        ->and(SecretLookingFiles::leaks(json_encode([$related, $asked], JSON_THROW_ON_ERROR)))->toBeFalse();
+});
+
+it('reads beside a file a test is written for the models and factories the studio names', function (): void {
+    mkdir($this->root.'/database/factories', 0755, true);
+    file_put_contents($this->root.'/database/factories/InvoiceFactory.php', "<?php\nclass InvoiceFactory {}\n");
+    ($this->git)('add', '-A');
+    ($this->git)('commit', '--quiet', '-m', 'a factory');
+    $asked = [];
+    Saloon::fake([AskScanQuestionRequest::class => function ($pending) use (&$asked) {
+        $asked[] = $pending->getRequest()->resolveEndpoint();
+
+        return MockResponse::make(['related' => ['app/F1.php' => ['database/factories/InvoiceFactory.php']]]);
+    }]);
+    $run = ($this->run)();
+
+    $related = (new ReflectionMethod($run, 'builtFrom'))->invoke($run, ['app/F1.php' => "<?php\n"]);
+
+    expect(array_column($related, 'path'))->toBe(['database/factories/InvoiceFactory.php'])
+        ->and($asked[0])->toEndWith('/scan/questions/test-builds-from');
+});
+
+it('reads nothing beside a file when the studio cannot be reached', function (): void {
+    Saloon::fake([AskScanQuestionRequest::class => MockResponse::make([], 500)]);
+    $run = ($this->run)();
+
+    expect((new ReflectionMethod($run, 'dependedOn'))->invoke($run, ['app/F1.php' => "<?php\n"]))->toBe([]);
+});
