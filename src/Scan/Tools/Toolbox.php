@@ -437,8 +437,8 @@ final class Toolbox
             }
         }
 
-        $took = (int) ((hrtime(true) - $run['started']) / 1_000_000);
         $findings = $tool instanceof StudioRuleset ? $tool->findingsIn((array) ($run['paths'] ?? [])) : $tool->findings($output, $this->root);
+        $took = (int) ((hrtime(true) - $run['started']) / 1_000_000);
         $summary = $tool->summary();
         $unread = $tool->unread($output);
 
