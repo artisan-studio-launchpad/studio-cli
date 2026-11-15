@@ -46,6 +46,46 @@ class Presence
         $this->containerHasOutput();
     }
 
+    /**
+     * What she rests in on the screens before linking: the public address of her idle clip, streamed, or, with
+     * streaming off, the copy in the per-user cache once it has been downloaded. Null when there is none.
+     */
+    private function restingBeforeLinking(): ?string
+    {
+        $clips = Container::getInstance()->make(AvatarClips::class);
+
+        return $clips->streams() ? $clips->idleClipUrl() : $clips->beforeLinkingClip();
+    }
+
+    /**
+     * Whether she can be shown on the screens before linking: a macOS window to show her in, and her idle
+     * clip either streamable or in the cache. Streaming needs nothing to be downloaded first.
+     */
+    public function isReady(): bool
+    {
+        return $this->isAvailable() && $this->restingBeforeLinking() !== null;
+    }
+
+    /**
+     * Says the line of a screen: its own clip once, or, until that clip exists, her idle clip going round
+     * so the screen's words are a caption under her. Nothing happens where she cannot be shown.
+     */
+    public function speak(string $kind): void
+    {
+        if (! $this->isAvailable()) {
+            return;
+        }
+
+        $own = $this->clipPath(self::PLACEMENT.'::'.$kind);
+        $clip = $own ?? $this->restingBeforeLinking();
+
+        if ($clip === null) {
+            return;
+        }
+
+        $this->sendToContainer(['play' => $clip, 'loop' => $own === null]);
+    }
+
     /** @param  array<string, mixed>  $event */
     public function react(array $event): void
     {

@@ -1,6 +1,7 @@
 <?php
 
 declare(strict_types=1);
+use ArtisanStudio\StudioCli\AvatarClips;
 
 return [
 
@@ -305,6 +306,24 @@ return [
         'source' => env('STUDIO_CLI_PRESENCE_SOURCE', 'studio'),
 
         'cache' => env('STUDIO_CLI_PRESENCE_CACHE', storage_path('app/studio-cli/avatar')),
+
+        /*
+        | Where the clip for the screens shown BEFORE a project is linked comes
+        | from: a public address, so no token is needed. The file is
+        | `<public_url>/<name>.mov`. Set it to an empty string to switch this
+        | off, and the screens show text only.
+        |
+        | `stream` (the default) hands the player that address and it plays the
+        | clip from there, so nothing is kept on the machine. Set it to false to
+        | download the clip once instead, into `fallback_cache`: a folder of the
+        | user's own, outside the project (on a Mac ~/Library/Caches/artisan-studio/avatar).
+        */
+
+        'public_url' => env('STUDIO_CLI_PRESENCE_PUBLIC_URL', AvatarClips::PUBLIC_URL),
+
+        'stream' => (bool) env('STUDIO_CLI_PRESENCE_STREAM', true),
+
+        'fallback_cache' => env('STUDIO_CLI_PRESENCE_FALLBACK_CACHE'),
 
         'size' => env('STUDIO_CLI_PRESENCE_SIZE', 400),
 

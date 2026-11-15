@@ -35,6 +35,8 @@ abstract class TestCase extends Orchestra
         @mkdir($state, 0755, true);
         StateFile::keepIn($state);
 
+        config(['studio-cli.presence.enabled' => false, 'studio-cli.presence.public_url' => '']);
+
         $this->app->instance(SnapshotSource::class, new SampleSnapshots);
         $this->app->instance(Shell::class, new class extends Shell
         {

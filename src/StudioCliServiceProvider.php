@@ -68,9 +68,25 @@ class StudioCliServiceProvider extends ServiceProvider
      */
     private const array SCAN_TASKS = ['blueprint', 'conventions', 'tools', 'tests', 'coverage', 'phpstan'];
 
+    /**
+     * ★ A PUBLISHED CONFIG HIDES EVERY KEY ADDED SINCE IT WAS PUBLISHED. Laravel merges a package's config one level
+     * deep, so an app that published `config/studio-cli.php` has its own `presence` block and none of the keys
+     * the package has added to it since, and the environment variables those keys read are never looked at: a
+     * `STUDIO_CLI_PRESENCE_PUBLIC_URL` in the .env did nothing. The keys the app's block lacks are filled in from
+     * the package's, one level down; what the app has set always wins. Only `presence`, which holds nothing but
+     * named settings: a list such as the tab order must never be merged by position.
+     */
+    private function fillInWhatAPublishedPresenceBlockLacks(): void
+    {
+        $package = require __DIR__.'/../config/studio-cli.php';
+
+        config()->set('studio-cli.presence', array_replace_recursive((array) ($package['presence'] ?? []), (array) config('studio-cli.presence')));
+    }
+
     public function register(): void
     {
         $this->mergeConfigFrom(__DIR__.'/../config/studio-cli.php', 'studio-cli');
+        $this->fillInWhatAPublishedPresenceBlockLacks();
 
         $this->app->singleton(Studio::class);
 

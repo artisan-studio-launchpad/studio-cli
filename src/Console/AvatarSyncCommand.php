@@ -24,13 +24,13 @@ class AvatarSyncCommand extends Command
             return self::SUCCESS;
         }
 
-        if (! $studio->isLinked()) {
-            $this->components->warn('This project is not linked yet. Run php artisan studio:settings, then try again.');
+        if (! $studio->isLinked() && $clips->streams()) {
+            $this->components->info('Before linking, her idle clip is streamed from its public address, so there is nothing to download.');
 
             return self::SUCCESS;
         }
 
-        $synced = $clips->sync();
+        $synced = $studio->isLinked() ? $clips->sync() : $clips->syncBeforeLinking();
 
         $this->components->twoColumnDetail('Downloaded', $synced['downloaded'] === [] ? 'nothing new' : implode(', ', $synced['downloaded']));
         $this->components->twoColumnDetail('Already up to date', $synced['kept'] === [] ? '—' : implode(', ', $synced['kept']));

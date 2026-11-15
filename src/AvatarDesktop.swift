@@ -97,6 +97,22 @@ final class AvatarView: NSView {
     }
 }
 
+/// A clip is a file on disk, or an https address to stream it from. Nothing else is a clip.
+func clipURL(_ given: String) -> URL? {
+    guard given.hasPrefix("https://") else {
+        return URL(fileURLWithPath: given)
+    }
+
+    guard let url = URL(string: given), url.host != nil else { return nil }
+
+    return url
+}
+
+extension URL {
+    /// What a clip is known by: its path on disk, or its whole address.
+    var clipKey: String { isFileURL ? path : absoluteString }
+}
+
 final class Delegate: NSObject, NSApplicationDelegate {
     private var window: AvatarWindow!
     private var players: [AVQueuePlayer] = []
@@ -293,12 +309,12 @@ final class Delegate: NSObject, NSApplicationDelegate {
 
     private func warmUp() {
         if !settings.preload.isEmpty {
-            settings.preload.forEach { preload(URL(fileURLWithPath: $0)) }
+            settings.preload.compactMap(clipURL).forEach { preload($0) }
 
             return
         }
 
-        guard let first = source else { return }
+        guard let first = source, first.isFileURL else { return }
 
         let folder = first.deletingLastPathComponent()
 
@@ -312,7 +328,7 @@ final class Delegate: NSObject, NSApplicationDelegate {
     }
 
     private func preload(_ url: URL) {
-        let key = url.path
+        let key = url.clipKey
 
         guard loaded[key] == nil else { return }
 
@@ -327,7 +343,7 @@ final class Delegate: NSObject, NSApplicationDelegate {
     private func play(_ url: URL, looping: Bool) {
         preload(url)
 
-        let item = AVPlayerItem(asset: (loaded[url.path]?.asset as? AVURLAsset) ?? AVURLAsset(url: url))
+        let item = AVPlayerItem(asset: (loaded[url.clipKey]?.asset as? AVURLAsset) ?? AVURLAsset(url: url))
 
         let back = 1 - front
         let player = players[back]
@@ -346,7 +362,7 @@ final class Delegate: NSObject, NSApplicationDelegate {
                 object: item,
                 queue: .main
             ) { [weak self] _ in
-                report(["finished": url.path])
+                report(["finished": url.clipKey])
 
                 guard let self, let resting = self.restingClip else { return }
 
@@ -356,7 +372,77 @@ final class Delegate: NSObject, NSApplicationDelegate {
 
         player.play()
 
-        bringForward(back)
+        streaming = !url.isFileURL
+
+        if url.isFileURL {
+            bringForward(back)
+        } else {
+            bringForwardOnceItCanPlay(item.asset, back)
+        }
+    }
+
+    /// ★ A STREAMED CLIP IS SHOWN ONLY ONCE IT CAN PLAY. Until the address has answered with something playable the
+    /// layer stays hidden, so an unreachable or wrong address leaves nothing on the screen: no frame, no error,
+    /// and nothing waiting. The window is transparent, so a hidden layer is no window at all.
+    private func bringForwardOnceItCanPlay(_ asset: AVAsset, _ next: Int) {
+        asset.loadValuesAsynchronously(forKeys: ["playable"]) { [weak self] in
+            DispatchQueue.main.async {
+                guard
+                    let self,
+                    asset.statusOfValue(forKey: "playable", error: nil) == .loaded,
+                    asset.isPlayable
+                else {
+                    return
+                }
+
+                self.bringForward(next)
+            }
+        }
+    }
+
+    private var streaming = false
+    private var hiddenByTheNetwork = false
+    private var stalledFor = 0
+
+    /// ★ A STREAM THAT DROPS TAKES HER AWAY, QUIETLY. When a streamed clip fails, or stalls for two checks in a row,
+    /// she is hidden and the player carries on; when the picture flows again she comes back. Clips on disk are
+    /// never touched by this.
+    private func watchTheStream() {
+        Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            guard let self, self.streaming else { return }
+
+            let player = self.players[self.front]
+
+            switch player.timeControlStatus {
+            case .playing:
+                self.stalledFor = 0
+
+                if self.hiddenByTheNetwork {
+                    self.hiddenByTheNetwork = false
+                    self.layers[self.front].isHidden = false
+                }
+            case .waitingToPlayAtSpecifiedRate:
+                self.stalledFor += 1
+
+                if self.stalledFor >= 2, !self.hiddenByTheNetwork, !self.layers[self.front].isHidden {
+                    self.hiddenByTheNetwork = true
+                    self.layers[self.front].isHidden = true
+                }
+            default:
+                break
+            }
+        }
+
+        NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemFailedToPlayToEndTime,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self, self.streaming else { return }
+
+            self.hiddenByTheNetwork = true
+            self.layers.forEach { $0.isHidden = true }
+        }
     }
 
     private func bringForward(_ next: Int) {
@@ -438,7 +524,7 @@ final class Delegate: NSObject, NSApplicationDelegate {
         }
 
         if let paths = message["preload"] as? [String] {
-            paths.forEach { preload(URL(fileURLWithPath: $0)) }
+            paths.compactMap(clipURL).forEach { preload($0) }
         }
 
         if message["hide"] as? Bool == true {
@@ -459,9 +545,9 @@ final class Delegate: NSObject, NSApplicationDelegate {
     }
 
     private func playClip(_ path: String, looping: Bool) {
-        guard FileManager.default.fileExists(atPath: path) else { return }
+        guard let url = clipURL(path) else { return }
 
-        let url = URL(fileURLWithPath: path)
+        if url.isFileURL, !FileManager.default.fileExists(atPath: path) { return }
 
         if looping {
             queued = nil
@@ -554,6 +640,7 @@ final class Delegate: NSObject, NSApplicationDelegate {
 
         hideWhenTheyLookAway()
         followHerWindow()
+        watchTheStream()
         listenForClips()
         warmUp()
     }
@@ -581,7 +668,7 @@ if args[1].hasPrefix("{") {
 
     delegate = Delegate(
         settings: settings,
-        source: args[1] == "-" ? nil : URL(fileURLWithPath: args[1]),
+        source: args[1] == "-" ? nil : clipURL(args[1]),
         loops: args.contains("--loop")
     )
 }

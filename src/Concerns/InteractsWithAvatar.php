@@ -21,13 +21,28 @@ trait InteractsWithAvatar
 
     protected function avatarArrives(): void
     {
+        $this->avatarLeavesWhenThisEnds();
+        $this->refreshAvatarClips();
+        $this->avatar()->arrive();
+    }
+
+    /**
+     * The screens before a project is linked. Her idle clip is streamed from its public address, so there is
+     * nothing to fetch; only with streaming off is it downloaded, in the background, into the per-user cache.
+     */
+    protected function avatarArrivesBeforeLinking(): void
+    {
+        $this->avatarLeavesWhenThisEnds();
+
+        Container::getInstance()->make(AvatarClips::class)->streams() || $this->refreshAvatarClips();
+    }
+
+    private function avatarLeavesWhenThisEnds(): void
+    {
         if (! $this->avatarLeavesOnExit) {
             $this->avatarLeavesOnExit = true;
             register_shutdown_function(fn () => $this->avatar()->dismiss());
         }
-
-        $this->refreshAvatarClips();
-        $this->avatar()->arrive();
     }
 
     private function refreshAvatarClips(): void

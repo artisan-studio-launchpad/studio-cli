@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use ArtisanStudio\StudioCli\Presence;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Process;
 
 /*
@@ -344,4 +345,86 @@ it('hands the player every setting it needs in one go, including the clips to ha
 
     expect($settings)->toMatchArray(['position' => 1.0, 'margin' => 24, 'draggable' => false, 'follow_terminal' => true, 'wait_for_loop' => true, 'swap_seconds' => 0.2])
         ->and($settings['preload'])->toEqualCanonicalizing([test()->clips.'/cli-workflow_started.mov', test()->clips.'/cli-workflow_done.mov']);
+});
+
+/*
+|--------------------------------------------------------------------------
+| The screens before a project is linked
+|--------------------------------------------------------------------------
+|
+| Her idle clip is streamed: the player is handed its public address, nothing is downloaded and nothing is
+| stored. With streaming off the clip is downloaded once into the user's own cache and played from there.
+|
+*/
+
+it('is ready for the screens before linking as soon as there is a window and an address to stream from', function (): void {
+    Http::fake();
+    config()->set('studio-cli.presence.public_url', 'https://public.test/avatar');
+
+    expect(test()->avatar->isReady())->toBeTrue();
+
+    config()->set('studio-cli.presence.public_url', '');
+
+    expect(test()->avatar->isReady())->toBeFalse();
+
+    config()->set('studio-cli.presence.public_url', 'https://public.test/avatar');
+    config()->set('studio-cli.presence.enabled', false);
+
+    expect(test()->avatar->isReady())->toBeFalse();
+
+    Http::assertNothingSent();
+});
+
+/**
+ * ★ UNTIL A SCREEN'S LINE EXISTS SHE IS STILL THERE. The clip for a screen is made later than the idle one, so
+ * a screen without its own rests in the idle clip, going round, and its words are the caption. The idle clip is
+ * handed to the player as its public address, to stream.
+ */
+it('hands the player the address of her idle clip, going round, until a screen has a clip of its own', function (): void {
+    Http::fake();
+    config()->set('studio-cli.presence.public_url', 'https://public.test/avatar');
+
+    test()->avatar->speak('token');
+
+    expect(whatItWasTold())->toContain('"play":"https://public.test/avatar/cli-workflow_started.mov"')->toContain('"loop":true');
+
+    Http::assertNothingSent();
+});
+
+it('says the line of a screen from its own clip, once, when it has one, and streams nothing', function (): void {
+    Http::fake();
+    aClipFor('cli-workflow_welcome');
+
+    test()->avatar->speak('welcome');
+
+    expect(whatItWasTold())->toContain('cli-workflow_welcome.mov')->toContain('"loop":false')->not->toContain('https://');
+
+    Http::assertNothingSent();
+});
+
+it('plays the downloaded copy from the per-user cache when streaming is off, and is ready only once it is there', function (): void {
+    $cache = test()->clips.'/user-cache';
+    mkdir($cache);
+    config()->set(['studio-cli.presence.stream' => false, 'studio-cli.presence.fallback_cache' => $cache]);
+
+    expect(test()->avatar->isReady())->toBeFalse();
+
+    touch($cache.'/cli-workflow_started.mov');
+
+    expect(test()->avatar->isReady())->toBeTrue();
+
+    test()->avatar->speak('welcome');
+
+    expect(whatItWasTold())->toContain($cache.'/cli-workflow_started.mov')->toContain('"loop":true')->not->toContain('https://');
+
+    unlink($cache.'/cli-workflow_started.mov');
+    rmdir($cache);
+});
+
+it('says nothing for a screen when she cannot be shown', function (): void {
+    config()->set('studio-cli.presence.enabled', false);
+
+    test()->avatar->speak('welcome');
+
+    expect(whatItWasTold())->toBe('');
 });
