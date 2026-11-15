@@ -69,6 +69,17 @@ trait HasSettings
         return $this->settingsOpen;
     }
 
+    /**
+     * Settings are open on a project that is not linked yet: the first thing a person does here. The
+     * row of tabs and the Settings button above is of no use then, and its space goes to the screen.
+     */
+    public function isLinkingForTheFirstTime(): bool
+    {
+        return $this->settingsOpen && $this->panel === null && collect($this->settings)->contains(
+            fn (Settings $group): bool => is_array($state = $group->getState()) && ($state['linked'] ?? true) === false,
+        );
+    }
+
     public function openSettings(): static
     {
         $this->panel = null;
@@ -195,9 +206,15 @@ trait HasSettings
         return $this;
     }
 
+    /**
+     * ★ AN OPEN SETTINGS SCREEN FOLLOWS THE LIVE STATE. The periodic refresh only brought a panel up to
+     * date, so the Settings menu kept the state it was opened with: "You allowed the bridge, but it is not
+     * running" stayed on screen after the bridge had started, beside a row that said running and a footer
+     * that said on. Whichever of the two is showing is refreshed.
+     */
     public function refreshPanel(): static
     {
-        return $this->showsPanel() ? $this->refreshSettings() : $this;
+        return $this->showsPanel() || $this->settingsAreOpen() ? $this->refreshSettings() : $this;
     }
 
     public function moveInSettings(int $step): static

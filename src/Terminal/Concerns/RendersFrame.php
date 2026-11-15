@@ -86,7 +86,7 @@ trait RendersFrame
     {
         $this->drawnAt($width);
 
-        if (! $this->showsTabs() || $width < self::MIN_WIDTH || $row !== $this->tabsAtRow()) {
+        if (! $this->showsTabs() || $this->isLinkingForTheFirstTime() || $width < self::MIN_WIDTH || $row !== $this->tabsAtRow()) {
             return null;
         }
 
@@ -108,6 +108,7 @@ trait RendersFrame
         $inner = $content - 2 * Canvas::GUTTER;
 
         return $this->hasSettings()
+            && ! $this->isLinkingForTheFirstTime()
             && $width >= self::MIN_WIDTH
             && $row === $this->tabsAtRow()
             && $at > $inner - mb_strwidth($this->settingsLabel(true))
@@ -213,8 +214,8 @@ trait RendersFrame
             $canvas->row($canvas->spread($heading.$description, $aside, $inner), $width),
             $canvas->row($canvas->gradient(str_repeat('─', $inner)), $width),
             $this->getNotice() === '' ? null : $canvas->row($canvas->span('● '.$canvas->fit($this->getNotice(), $inner - 2), $this->getNoticeColour()), $width),
-            $this->showsTabs() || $this->hasSettings() ? $canvas->row($canvas->spread($this->tabsRow($canvas, $tab), $this->settingsTab($canvas), $inner), $width) : null,
-            $canvas->blank($width),
+            ($this->showsTabs() || $this->hasSettings()) && ! $this->isLinkingForTheFirstTime() ? $canvas->row($canvas->spread($this->tabsRow($canvas, $tab), $this->settingsTab($canvas), $inner), $width) : null,
+            $this->isLinkingForTheFirstTime() ? null : $canvas->blank($width),
         ]));
     }
 

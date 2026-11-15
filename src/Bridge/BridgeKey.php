@@ -26,6 +26,11 @@ final class BridgeKey
         @file_put_contents(self::path(), (string) json_encode(['saved' => $saved, 'at' => time()]), LOCK_EX);
     }
 
+    public static function forget(): void
+    {
+        @unlink(self::path());
+    }
+
     public static function isSaved(): bool
     {
         $json = is_file(self::path()) ? json_decode((string) @file_get_contents(self::path()), true) : null;

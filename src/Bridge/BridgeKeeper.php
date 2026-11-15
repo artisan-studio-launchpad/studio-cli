@@ -86,12 +86,14 @@ final class BridgeKeeper
     }
 
     /**
-     * The developer said no: remember it, tell the studio, and stop.
+     * The developer said no: remember it, tell the studio, and stop. The studio
+     * is told it was a no, so a question asked in the app is answered there
+     * instead of timing out.
      */
     public function refuse(): void
     {
         $this->consent->refuse();
-        $this->studio->reportBridge(BridgeGate::OFF);
+        $this->studio->reportBridge(BridgeGate::OFF, 'declined');
         $this->tasks->stop([self::TASK]);
     }
 }

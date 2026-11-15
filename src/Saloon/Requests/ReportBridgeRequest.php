@@ -18,6 +18,7 @@ class ReportBridgeRequest extends Request implements HasBody
     public function __construct(
         private readonly string $project,
         private readonly string $state,
+        private readonly ?string $answer = null,
     ) {}
 
     public function resolveEndpoint(): string
@@ -26,10 +27,10 @@ class ReportBridgeRequest extends Request implements HasBody
     }
 
     /**
-     * @return array{state: string, runner: string}
+     * @return array{state: string, runner: string, answer?: string}
      */
     protected function defaultBody(): array
     {
-        return ['state' => $this->state, 'runner' => 'claude'];
+        return ['state' => $this->state, 'runner' => 'claude', ...($this->answer === null ? [] : ['answer' => $this->answer])];
     }
 }

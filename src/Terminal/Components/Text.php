@@ -91,10 +91,12 @@ final class Text extends Component
         $description = (string) $this->getDescription($state);
 
         $indent = fn (string $line): string => $this->centred ? str_repeat(' ', max(0, intdiv($width - Canvas::visibleWidth($line), 2))).$line : $line;
+        $url = $this->getUrl($state);
 
-        return $content === '' ? [] : [
-            ...array_map(fn (string $line): string => $canvas->span($indent($line), $this->getColour($state), bold: $this->bold), $canvas->wrap($content, $width)),
+        return $content === '' && $url === null ? [] : [
+            ...($content === '' ? [] : array_map(fn (string $line): string => $canvas->span($indent($line), $this->getColour($state), bold: $this->bold), $canvas->wrap($content, $width))),
             ...array_map(fn (string $line): string => $canvas->span($indent($line), $this->getDescriptionColour($state)), $description === '' ? [] : $canvas->wrap($description, $width)),
+            ...($url === null ? [] : [$indent($canvas->link($canvas->span($url.' '.Canvas::OPENS, 'cyan', bold: true), $url))]),
         ];
     }
 

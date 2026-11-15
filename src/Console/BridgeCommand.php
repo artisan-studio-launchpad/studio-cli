@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ArtisanStudio\StudioCli\Console;
 
 use ArtisanStudio\StudioCli\BackgroundTasks;
+use ArtisanStudio\StudioCli\Bridge\AiUsage;
 use ArtisanStudio\StudioCli\Bridge\BridgeBeat;
 use ArtisanStudio\StudioCli\Bridge\BridgeConsent;
 use ArtisanStudio\StudioCli\Bridge\BridgeGate;
@@ -123,8 +124,11 @@ class BridgeCommand extends Command
 
         register_shutdown_function($workers->stop(...));
 
+        $usage = app(AiUsage::class);
+
         while (! $this->orphaned()) {
             $workers->keep();
+            $usage->keep();
 
             sleep(1);
         }

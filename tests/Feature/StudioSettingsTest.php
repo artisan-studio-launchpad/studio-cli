@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use ArtisanStudio\StudioCli\Bridge\BridgeConsent;
 use ArtisanStudio\StudioCli\Console\StudioCommand;
 use ArtisanStudio\StudioCli\Editor;
 use ArtisanStudio\StudioCli\EnvFile;
@@ -12,6 +13,8 @@ use ArtisanStudio\StudioCli\Terminal\Contracts\RunsInBackground;
 use ArtisanStudio\StudioCli\Terminal\ScreenContainer;
 use Illuminate\Console\OutputStyle;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Process;
 use Saloon\Http\Faking\MockResponse;
 use Saloon\Laravel\Facades\Saloon;
 use Symfony\Component\Console\Input\ArrayInput;
@@ -33,6 +36,7 @@ beforeEach(function (): void {
     file_put_contents($this->env, "APP_NAME=Test\nARTISAN_STUDIO_URL=\"https://studio.test\"\nARTISAN_STUDIO_TOKEN=\"test-token\"\nARTISAN_STUDIO_PROJECT=\"1\"\n");
     app()->instance(EnvFile::class, new EnvFile($this->env));
     app()->instance(Presence::class, Mockery::mock(Presence::class)->shouldIgnoreMissing());
+    BridgeConsent::make()->refuse();
     Saloon::fake([ListProjectsRequest::class => MockResponse::make(['projects' => [
         ['slug' => '1', 'name' => 'Artisan Studio', 'repo' => 'acme/studio'],
     ]])]);
@@ -49,6 +53,7 @@ beforeEach(function (): void {
 
 afterEach(function (): void {
     @unlink($this->env);
+    @unlink(BridgeConsent::make()->path());
 });
 
 it('opens from s or the ⚙ at the far right of the tabs, and closes the same way', function (): void {
@@ -174,11 +179,48 @@ it('takes a pasted token right there in Settings, masked, and links the project 
     $typing = ($this->drawn)();
     ($this->press)("\n");
 
-    expect($typing)->toContain("Paste this project's token")->toContain('Generate token')->toContain('› •••••••••')->toContain('Done')->toContain('Cancel')
+    expect($typing)->toContain(__('studio-cli::welcome.paste'))->toContain('› •••••••••')->toContain('Done')->toContain('Cancel')
         ->not->toContain('new-token')
         ->and(($this->flash)())->toBe('Linked to Artisan Studio.')
         ->and(file_get_contents($this->env))->toContain('ARTISAN_STUDIO_TOKEN="new-token"')->toContain('ARTISAN_STUDIO_PROJECT="1"')
         ->and(config('studio-cli.token'))->toBe('new-token');
+});
+
+it('shows the sign-in link and what to do there in the info block above everything in Settings while the project is not linked', function (): void {
+    config()->set(['studio-cli.url' => 'https://studio.test/', 'studio-cli.token' => null, 'studio-cli.project' => null]);
+    ($this->press)('s');
+    $unlinked = ($this->drawn)(160);
+    $link = 'https://studio.test/auth/github';
+
+    expect(__('studio-cli::welcome.token_title').' '.__('studio-cli::welcome.token'))->toBe("Almost there! Open the link below, sign in with GitHub and choose your repository. Press Generate token, then paste it here. It's shown only once, so copy it first.")
+        ->and($unlinked)->toContain($link)->toContain(__('studio-cli::welcome.token_title'))->toContain('copy it first.')->not->toContain('then paste it here:')
+        ->and(strpos($unlinked, 'copy it first.'))->toBeLessThan((int) strpos($unlinked, $link))
+        ->and(strpos($unlinked, $link))->toBeLessThan((int) strpos($unlinked, 'Link with a token'))
+        ->and(strpos($unlinked, 'Link with a token'))->toBeLessThan((int) strpos($unlinked, 'This project is not linked yet'))
+        ->and($unlinked)->not->toMatch('/[⚙≡️]+ Settings/u');
+});
+
+it('leaves the sign-in link out of Settings once the project is linked', function (): void {
+    config()->set('studio-cli.url', 'https://studio.test/');
+    ($this->press)('s');
+
+    expect(($this->drawn)(160))->not->toContain('https://studio.test/auth/github')->not->toContain(__('studio-cli::welcome.token_title'))->toMatch('/[⚙≡️]+ Settings/u');
+});
+
+it('scrolls with the mouse wheel and with the arrow and page keys while the token is being typed, and still types everything else', function (): void {
+    ($this->press)('s', "\n");
+    $action = fn (string $input): ?string => (fn (): ?string => $this->screenActionFor($input))->call($this->command);
+
+    expect(($this->studio)()->isTypingInSettings())->toBeTrue()
+        ->and($action("\e[<65;10;10M"))->toBe('scroll:3')
+        ->and($action("\e[<64;10;10M"))->toBe('scroll:-3')
+        ->and($action('a'))->toBe('settings:type:a')
+        ->and($action('j'))->toBe('settings:type:j')
+        ->and($action(' '))->toBe('settings:type: ')
+        ->and($action("\e[A"))->toBe('scroll:-1')
+        ->and($action("\e[B"))->toBe('scroll:1')
+        ->and($action("\e[5~"))->toBe('page-up')
+        ->and($action("\e[6~"))->toBe('page-down');
 });
 
 it('treats every key as part of the token while it is being typed, and backspace takes the last one off', function (): void {
@@ -311,4 +353,87 @@ it('links the project the token was made for, whatever the .env named before', f
 
     expect(file_get_contents($this->env))->toContain('ARTISAN_STUDIO_PROJECT="1"')
         ->and(config('studio-cli.project'))->toBe('1');
+});
+
+/*
+|--------------------------------------------------------------------------
+| She is there before the project is linked
+|--------------------------------------------------------------------------
+|
+| The welcome screen and the token screen show her where she can be shown, and are text only everywhere
+| else, without an error and without waiting on anything.
+|
+*/
+
+it('shows her on the welcome screen and then on the token screen, once each, streaming her clip with nothing downloaded and no process started', function (): void {
+    Process::fake();
+    Http::fake();
+    config()->set(['studio-cli.token' => null, 'studio-cli.project' => null]);
+    $avatar = Mockery::mock(Presence::class)->shouldIgnoreMissing();
+    $avatar->shouldReceive('isAvailable')->andReturn(true);
+    $avatar->shouldReceive('isReady')->andReturn(true);
+    $avatar->shouldNotReceive('arrive');
+    $avatar->shouldReceive('speak')->with('welcome')->once();
+    $avatar->shouldReceive('speak')->with('token')->once();
+    app()->instance(Presence::class, $avatar);
+    $this->command->setInput(new ArrayInput([], $this->command->getDefinition()));
+    $this->command->setLaravel(app());
+    $tick = fn () => (fn () => $this->screenTicked())->call($this->command);
+
+    $tick();
+    $tick();
+    $tick();
+
+    Process::assertNothingRan();
+    Http::assertNothingSent();
+});
+
+it('downloads her clip in the background, then shows her, only when streaming is switched off', function (): void {
+    Process::fake();
+    config()->set(['studio-cli.token' => null, 'studio-cli.project' => null, 'studio-cli.presence.stream' => false]);
+    $avatar = Mockery::mock(Presence::class)->shouldIgnoreMissing();
+    $avatar->shouldReceive('isAvailable')->andReturn(true);
+    $avatar->shouldReceive('isReady')->andReturn(true);
+    $avatar->shouldReceive('speak')->with('welcome')->once();
+    $avatar->shouldReceive('speak')->with('token')->once();
+    app()->instance(Presence::class, $avatar);
+    $this->command->setInput(new ArrayInput([], $this->command->getDefinition()));
+    $this->command->setLaravel(app());
+    $tick = fn () => (fn () => $this->screenTicked())->call($this->command);
+
+    $tick();
+    $tick();
+
+    Process::assertRan(fn ($process): bool => str_contains((string) $process->command, 'studio:avatar-sync'));
+});
+
+it('waits, without an error, until her idle clip can be shown before showing her', function (): void {
+    Process::fake();
+    config()->set(['studio-cli.token' => null, 'studio-cli.project' => null]);
+    $avatar = Mockery::mock(Presence::class)->shouldIgnoreMissing();
+    $avatar->shouldReceive('isAvailable')->andReturn(true);
+    $avatar->shouldReceive('isReady')->andReturn(false);
+    $avatar->shouldNotReceive('speak');
+    app()->instance(Presence::class, $avatar);
+    $this->command->setInput(new ArrayInput([], $this->command->getDefinition()));
+    $this->command->setLaravel(app());
+
+    (fn () => $this->screenTicked())->call($this->command);
+
+    expect(($this->drawn)())->toContain(__('studio-cli::welcome.token_title'))->toContain('Link with a token');
+});
+
+it('leaves her out where she cannot be shown, and once the project is linked', function (): void {
+    Process::fake();
+    $avatar = Mockery::mock(Presence::class)->shouldIgnoreMissing();
+    $avatar->shouldReceive('isAvailable')->andReturn(false);
+    $avatar->shouldNotReceive('speak');
+    app()->instance(Presence::class, $avatar);
+
+    config()->set(['studio-cli.token' => null, 'studio-cli.project' => null]);
+    $this->command->setInput(new ArrayInput([], $this->command->getDefinition()));
+    $this->command->setLaravel(app());
+    (fn () => $this->screenTicked())->call($this->command);
+
+    Process::assertNothingRan();
 });

@@ -44,6 +44,7 @@ readonly class DashboardSnapshot
         public array $filesWanted = [],
         public ?array $workTogether = null,
         public array $searchesWanted = [],
+        public ?string $bridgeAsked = null,
     ) {}
 
     public static function fresh(?Carbon $at = null): self
@@ -143,6 +144,7 @@ readonly class DashboardSnapshot
                 'pattern' => (string) $search['pattern'],
                 'in' => is_string($search['in'] ?? null) && $search['in'] !== '' ? $search['in'] : null,
             ], array_filter((array) data_get($data, 'work.searches', []), fn (mixed $search): bool => is_array($search) && is_string($search['id'] ?? null) && is_string($search['pattern'] ?? null)))),
+            bridgeAsked: is_string($asked = data_get($data, 'bridge.asked')) && $asked !== '' ? $asked : null,
         );
     }
 

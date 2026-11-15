@@ -114,6 +114,29 @@ final class BridgeSetup
     }
 
     /**
+     * The same two lines as {@see self::question()}, apart, for the marked block at the top of the
+     * settings.
+     *
+     * @return array{question: string, account: ?string}
+     */
+    public function questionLines(): array
+    {
+        $who = $this->account->who();
+
+        return ['question' => __('studio-cli::bridge.consent.question'), 'account' => $who === null ? null : __('studio-cli::bridge.consent.account', ['who' => $who])];
+    }
+
+    /**
+     * Whether the question is open on the settings screen: the developer has not answered, and
+     * there is a runner or a key for a yes to mean anything. With neither, the screen says what is
+     * missing instead.
+     */
+    public function isAsking(): bool
+    {
+        return $this->isUndecided() && ! $this->isBlocked();
+    }
+
+    /**
      * The bridge's state at the right end of the key hints: a plain marker, one
      * column wide in any monospace font, and the state in words.
      *
@@ -169,6 +192,21 @@ final class BridgeSetup
         return Settings::make(__('studio-cli::bridge.block.title'))
             ->components($this->blockTexts())
             ->actions([Action::make('understood')->label(__('studio-cli::bridge.block.understood'))->closes()->action(fn (): ?string => null)]);
+    }
+
+    /**
+     * The bridge question on a panel of its own, for when the app asks: only
+     * what is being allowed and the two answers, so both always fit on the
+     * screen, whatever the size of the window.
+     */
+    public function askPanel(): Settings
+    {
+        return Settings::make(__('studio-cli::bridge.consent.label'))
+            ->components([Text::make(fn (mixed $state): string => $this->question())->colour('amber')->wrap()])
+            ->actions([
+                Action::make('allow')->label(__('studio-cli::bridge.consent.yes'))->closes()->action(fn (): string => $this->choose(self::YES)),
+                Action::make('keep-off')->label(__('studio-cli::bridge.consent.no'))->closes()->action(fn (): string => $this->choose(self::NO)),
+            ]);
     }
 
     /**

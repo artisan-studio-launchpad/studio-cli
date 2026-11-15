@@ -5,12 +5,12 @@ declare(strict_types=1);
 namespace ArtisanStudio\StudioCli\Console;
 
 use ArtisanStudio\StudioCli\Bridge\BridgeSetup;
-use ArtisanStudio\StudioCli\Dashboard\NotConnected;
 use ArtisanStudio\StudioCli\Dashboard\SnapshotSource;
 use ArtisanStudio\StudioCli\Editor;
 use ArtisanStudio\StudioCli\EnvFile;
 use ArtisanStudio\StudioCli\Studio;
 use ArtisanStudio\StudioCli\Terminal\Action;
+use ArtisanStudio\StudioCli\Terminal\Components\Alert;
 use ArtisanStudio\StudioCli\Terminal\Components\Columns\Column;
 use ArtisanStudio\StudioCli\Terminal\Components\Feed;
 use ArtisanStudio\StudioCli\Terminal\Components\Text;
@@ -31,8 +31,6 @@ class SettingsCommand extends Command implements ProvidesSettings
     private const string PROJECT = 'ARTISAN_STUDIO_PROJECT';
 
     private const string EDITOR = 'ARTISAN_STUDIO_EDITOR';
-
-    private const string ASK_FOR_A_TOKEN = "Paste this project's token. ".NotConnected::WHERE_THE_TOKEN_IS.' It is shown once.';
 
     protected $aliases = ['studio:link'];
 
@@ -70,29 +68,37 @@ class SettingsCommand extends Command implements ProvidesSettings
         return $settings->label('Studio')
             ->state(fn (): array => $this->whereThisCheckoutStands())
             ->components([
-                Feed::make(fn (array $state): array => $state['rows'])
-                    ->columns([
-                        Column::make('label')->width(10)->colour('dim'),
-                        Column::make('value')->colour('soft'),
-                        Column::make('status')
-                            ->width(14)
-                            ->colour(fn (array $row): string => $row['colour'])
-                            ->formatStateUsing(fn (string $status): string => $status === '' ? '' : "● {$status}"),
-                    ]),
-                Text::make(fn (array $state): string => (string) $state['problem'])->colour('rose')->wrap(),
-                Text::make(fn (array $state): string => (string) $state['bridge'])->colour('soft')->wrap(),
-                ...app(BridgeSetup::class)->blockTexts(fn (mixed $state): bool => is_array($state) && ($state['linked'] ?? false) === true),
+                Alert::make(fn (array $state): string => $state['linked'] ? '' : __('studio-cli::welcome.token_title'))
+                    ->description(fn (array $state): string => $state['linked'] ? '' : __('studio-cli::welcome.token'))
+                    ->colour('cyan')
+                    ->descriptionColour('soft'),
+                Text::make('')
+                    ->wrap()
+                    ->url(fn (array $state): ?string => $state['linked'] ? null : app(Studio::class)->signInUrl()),
+                Alert::make(fn (array $state): string => $state['asking'] ? app(BridgeSetup::class)->questionLines()['question'] : '')
+                    ->description(fn (array $state): string => $state['asking'] ? (string) app(BridgeSetup::class)->questionLines()['account'] : '')
+                    ->colour('amber'),
+                ...$this->standing(below: false),
             ])
+            ->belowActions($this->standing(below: true))
             ->actions([
+                Action::make('allow')
+                    ->label(__('studio-cli::bridge.consent.yes'))
+                    ->visible(fn (array $state): bool => $state['asking'])
+                    ->action(fn (): string => app(BridgeSetup::class)->choose(BridgeSetup::YES)),
+                Action::make('keep-off')
+                    ->label(__('studio-cli::bridge.consent.no'))
+                    ->visible(fn (array $state): bool => $state['asking'])
+                    ->action(fn (): string => app(BridgeSetup::class)->choose(BridgeSetup::NO)),
                 Action::make('link')
                     ->label('Link with a token')
                     ->visible(fn (array $state): bool => ! $state['linked'])
-                    ->asks(self::ASK_FOR_A_TOKEN, secret: true)
+                    ->asks(__('studio-cli::welcome.paste'), secret: true)
                     ->action(fn (string $token): ?string => $this->linkWith($token)),
                 Action::make('relink')
                     ->label('Link with a new token')
                     ->visible(fn (array $state): bool => $state['linked'])
-                    ->asks(self::ASK_FOR_A_TOKEN, secret: true)
+                    ->asks(__('studio-cli::welcome.paste'), secret: true)
                     ->action(fn (string $token): ?string => $this->linkWith($token)),
                 Action::make('editor')
                     ->label('Choose your editor')
@@ -105,7 +111,7 @@ class SettingsCommand extends Command implements ProvidesSettings
                     ->action(fn (): string => $this->unlink()),
                 Action::make('bridge')
                     ->label(__('studio-cli::bridge.consent.label'))
-                    ->visible(fn (array $state): bool => $state['linked'])
+                    ->visible(fn (array $state): bool => $state['linked'] && ! $state['asking'])
                     ->question(fn (): string => app(BridgeSetup::class)->question())
                     ->options(fn (): array => app(BridgeSetup::class)->choices())
                     ->action(fn (string $choice): string => app(BridgeSetup::class)->choose($choice)),
@@ -113,7 +119,38 @@ class SettingsCommand extends Command implements ProvidesSettings
     }
 
     /**
-     * @return array{linked: bool, rows: list<array{label: string, value: string, status: string, colour: string}>, problem: ?string, bridge: string, editors: array<string, string>}
+     * ★ WHILE THE BRIDGE QUESTION IS OPEN IT IS THE FIRST THING ON THE SCREEN. It used to sit under the
+     * menu, out of view in a short terminal, so a CLI waiting for an answer looked like one that was
+     * not. While it is open the question is a marked block at the top with the two answers right under
+     * it, and what the checkout stands on (the project, the token, the bridge's state) moves under the
+     * menu. Once it is answered the block and the answers go and the screen is as it was. Unlinked it is
+     * the same: the sign-in link comes first and "Link with a token" right under it, so both are on the
+     * screen at once, and the rows move under the menu.
+     *
+     * @return list<Feed|Text>
+     */
+    private function standing(bool $below): array
+    {
+        $shown = fn (mixed $state): bool => is_array($state) && (($state['asking'] ?? false) || ! ($state['linked'] ?? true)) === $below;
+
+        return [
+            Feed::make(fn (array $state): array => $shown($state) ? $state['rows'] : [])
+                ->columns([
+                    Column::make('label')->width(10)->colour('dim'),
+                    Column::make('value')->colour('soft'),
+                    Column::make('status')
+                        ->width(14)
+                        ->colour(fn (array $row): string => $row['colour'])
+                        ->formatStateUsing(fn (string $status): string => $status === '' ? '' : "● {$status}"),
+                ]),
+            Text::make(fn (array $state): string => $shown($state) ? (string) $state['problem'] : '')->colour('rose')->wrap(),
+            Text::make(fn (array $state): string => $shown($state) ? (string) $state['bridge'] : '')->colour('soft')->wrap(),
+            ...app(BridgeSetup::class)->blockTexts(fn (mixed $state): bool => $shown($state) && ($state['linked'] ?? false) === true),
+        ];
+    }
+
+    /**
+     * @return array{linked: bool, asking: bool, rows: list<array{label: string, value: string, status: string, colour: string}>, problem: ?string, bridge: string, editors: array<string, string>}
      */
     private function whereThisCheckoutStands(): array
     {
@@ -124,6 +161,7 @@ class SettingsCommand extends Command implements ProvidesSettings
 
         return [
             'linked' => $linked,
+            'asking' => $linked && app(BridgeSetup::class)->isAsking(),
             'rows' => [
                 ...($linked ? $this->linkedRows($current) : $this->unlinkedRows()),
                 ...($linked ? [app(BridgeSetup::class)->row()] : []),

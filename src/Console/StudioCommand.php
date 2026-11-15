@@ -10,6 +10,7 @@ use ArtisanStudio\StudioCli\Bridge\BridgeGate;
 use ArtisanStudio\StudioCli\Bridge\BridgeKeeper;
 use ArtisanStudio\StudioCli\Bridge\BridgeSetup;
 use ArtisanStudio\StudioCli\Bridge\Runners;
+use ArtisanStudio\StudioCli\Concerns\InteractsWithAvatar;
 use ArtisanStudio\StudioCli\Dashboard\DashboardSnapshot;
 use ArtisanStudio\StudioCli\Dashboard\FreshSnapshots;
 use ArtisanStudio\StudioCli\Dashboard\SampleSnapshots;
@@ -38,6 +39,7 @@ use Illuminate\Console\Command;
 
 class StudioCommand extends Command implements HasScreen
 {
+    use InteractsWithAvatar;
     use InteractsWithScreen;
 
     public const string SIGNATURE = 'studio';
@@ -49,6 +51,8 @@ class StudioCommand extends Command implements HasScreen
      * once the studio has heard what landed.
      */
     private const int AGREED_AGAIN_AFTER_SECONDS = 20;
+
+    private const int BRIDGE_ASKED_EVERY_SECONDS = 2;
 
     private const int FILES_AGAIN_AFTER_SECONDS = 10;
 
@@ -68,9 +72,33 @@ class StudioCommand extends Command implements HasScreen
 
     private ?string $askedForTheToken = null;
 
+    private bool $avatarStarted = false;
+
+    private string $avatarSaid = '';
+
     private bool $askedAboutTheBridge = false;
 
+    private ?string $bridgeAskedShown = null;
+
+    private bool $bridgeQuestionOpen = false;
+
+    private const int MOVE_ON_AFTER_SECONDS = 3;
+
+    private const string FIRST_TAB = 'dashboard';
+
+    private ?int $readySince = null;
+
+    private bool $takenOver = false;
+
+    private bool $movedOn = false;
+
+    private int $bridgePolledAt = 0;
+
+    private ?string $bridgeAskedNow = null;
+
     private ?string $bridgeReported = null;
+
+    private bool $bridgeReportedAsking = false;
 
     private ?string $bridgeDetected = null;
 
@@ -213,9 +241,88 @@ class StudioCommand extends Command implements HasScreen
 
         match (true) {
             $setup->isBlocked() => $this->getScreen()->openPanel([$setup->blockPanel()]),
-            $setup->isUndecided() && $setup->notReady() === null => $this->getScreen()->startSetting('bridge'),
+            $setup->isUndecided() && $setup->notReady() === null => $this->getScreen()->focusSetting('allow'),
             default => null,
         };
+    }
+
+    /**
+     * When the developer asks in the app to allow the AI bridge, this screen
+     * goes straight to the bridge question and shows what is being allowed:
+     * the yes is given here, never in the browser. Each question opens the
+     * screen once, so a developer who answers no is not asked again until
+     * they ask again in the app.
+     */
+    private function showTheBridgeWhenAskedInTheApp(): void
+    {
+        if ($this->repository === null || $this->option('demo') || $this->option('fresh') || $this->laravel->make(Studio::class)->connection() !== Studio::CONNECTED) {
+            return;
+        }
+
+        if ($this->laravel->make(BridgeGate::class)->isConnected() && ! $this->bridgeQuestionOpen) {
+            return;
+        }
+
+        $asked = $this->bridgeAskedInTheApp();
+
+        if ($asked === null || $asked === $this->bridgeAskedShown) {
+            return;
+        }
+
+        $this->bridgeAskedShown = $asked;
+        $setup = $this->laravel->make(BridgeSetup::class);
+
+        $this->getScreen()->openPanel([$setup->isBlocked() ? $setup->blockPanel() : $setup->askPanel()]);
+        $this->bridgeQuestionOpen = $this->getScreen()->showsPanel();
+    }
+
+    /**
+     * The question was asked from Insights, where the developer pressed Fix
+     * with SAMI, so once it is answered, put away with Esc, or taken back in
+     * the app with Not now, the screen goes back to the Insights tab instead
+     * of staying in Settings.
+     */
+    private function backToInsightsOnceTheBridgeQuestionIsDone(): void
+    {
+        if (! $this->bridgeQuestionOpen) {
+            return;
+        }
+
+        if ($this->getScreen()->showsPanel() && ! $this->isTheBridgeQuestionWithdrawn()) {
+            return;
+        }
+
+        $this->getScreen()->closeSettings();
+        $this->bridgeQuestionOpen = false;
+        $this->laravel->make(ScreenRequests::class)->show('insights');
+    }
+
+    /**
+     * Whether the studio no longer carries the question this screen is
+     * showing: the developer pressed Not now in the app.
+     */
+    private function isTheBridgeQuestionWithdrawn(): bool
+    {
+        return $this->laravel->make(Studio::class)->connection() === Studio::CONNECTED && $this->bridgeAskedInTheApp() === null;
+    }
+
+    /**
+     * The question the developer asked in the app, if one waits. A small
+     * request of its own, made every two seconds while the bridge is not on or a
+     * question is showing, so a question, or taking it back, reaches this
+     * screen at once instead of with the next full refresh. An answer that
+     * did not come keeps what was known.
+     */
+    private function bridgeAskedInTheApp(): ?string
+    {
+        if (time() - $this->bridgePolledAt >= self::BRIDGE_ASKED_EVERY_SECONDS) {
+            $this->bridgePolledAt = time();
+            $answer = $this->laravel->make(Studio::class)->bridgeAsked();
+
+            $answer === null || $this->bridgeAskedNow = $answer['asked'];
+        }
+
+        return $this->bridgeAskedNow;
     }
 
     /**
@@ -250,9 +357,49 @@ class StudioCommand extends Command implements HasScreen
 
         match (true) {
             $now === BridgeDetection::KEY => $this->flashScreen((string) __('studio-cli::bridge.cli.explain.key')),
-            $setup->isUndecided() && $setup->notReady() === null => $this->getScreen()->startSetting('bridge'),
+            $setup->isUndecided() && $setup->notReady() === null => $this->getScreen()->focusSetting('allow'),
             default => null,
         };
+    }
+
+    /**
+     * ★ ONCE THE SETUP IS DONE, MOVE ON TO THE SCAN, ONCE. When the project is linked, the token accepted,
+     * and the bridge decided and, if allowed, running (or an app key is in use), the dashboard stays up
+     * for three seconds so the status can be read, then the screen goes to the Scan tab. The three seconds
+     * count from the moment all of that first holds on the dashboard with nothing open, not from the start.
+     * Any key, click or scroll after that moment means the person has taken over, and it never moves them.
+     * It never moves twice. A refused bridge, a missing runner, a rejected token and an unanswered bridge
+     * question are all "not ready", so the screen that needs reading stays.
+     */
+    private function moveOnToTheScanOnce(): void
+    {
+        if ($this->movedOn || $this->takenOver || $this->option('demo') || $this->option('fresh') || $this->option('once') || $this->option('tab')) {
+            return;
+        }
+
+        $screen = $this->getScreen();
+        $studio = $this->laravel->make(Studio::class);
+        $idle = ! $screen->settingsAreOpen() && ! $screen->showsPanel() && ! $this->screenHelp && ! $this->bridgeQuestionOpen && $screen->tab($this->screenTab)->getKey() === self::FIRST_TAB;
+        $ready = $idle
+            && $studio->isLinked()
+            && $studio->connection() === Studio::CONNECTED
+            && $this->laravel->make(BridgeGate::class)->isConnected()
+            && in_array(ScanCommand::TAB, $screen->tabKeys(), true);
+
+        if (! $ready) {
+            $this->readySince = null;
+
+            return;
+        }
+
+        $this->readySince ??= now()->getTimestamp();
+
+        if (now()->getTimestamp() - $this->readySince < self::MOVE_ON_AFTER_SECONDS) {
+            return;
+        }
+
+        $this->movedOn = true;
+        $this->showScreenTab(ScanCommand::TAB);
     }
 
     /**
@@ -269,13 +416,28 @@ class StudioCommand extends Command implements HasScreen
         }
 
         $status = $this->laravel->make(BridgeGate::class)->status();
+        $asking = $this->isAskingAboutTheBridge();
 
-        if ($status === $this->bridgeReported) {
+        if ($status === $this->bridgeReported && $asking === $this->bridgeReportedAsking) {
             return;
         }
 
         $this->bridgeReported = $status;
-        $studio->reportBridge($status);
+        $this->bridgeReportedAsking = $asking;
+        $studio->reportBridge($status, $asking ? 'asking' : null);
+    }
+
+    /**
+     * ★ THE STUDIO WAITS FOR THE ANSWER. Right after linking, the bridge reads as off both for a
+     * developer who has not been asked yet and for one who said no, so the studio could not tell the
+     * question was still open and went on with its next step over the top of it. While the question
+     * is on this screen the studio is told so, and told again, plainly, once it has been answered.
+     */
+    private function isAskingAboutTheBridge(): bool
+    {
+        $setup = $this->laravel->make(BridgeSetup::class);
+
+        return $this->askedAboutTheBridge && $setup->isUndecided() && $setup->notReady() === null && ! $setup->isBlocked();
     }
 
     /**
@@ -445,11 +607,52 @@ class StudioCommand extends Command implements HasScreen
         $this->laravel->make(Runners::class)->forget();
     }
 
+    protected function screenActed(): void
+    {
+        $this->readySince === null || $this->takenOver = true;
+    }
+
+    /**
+     * ★ SHE IS THERE BEFORE THE PROJECT IS LINKED, AND NEVER AT THE COST OF THE SCREEN. Where she can be
+     * shown (macOS, her window installed, her idle clip in the cache) she appears on the welcome screen
+     * and on the token screen, saying that screen's line or, until that clip exists, going round in her
+     * idle clip with the words as the caption. The clips are fetched in the background from a public
+     * address with no token; until they are in, and wherever she cannot be shown, the screens are
+     * text only. Nothing here can fail the screen or wait on the network.
+     */
+    private function showTheAvatarWhileNotLinked(): void
+    {
+        if ($this->option('demo') || $this->option('once') || $this->option('tab')) {
+            return;
+        }
+
+        if ($this->laravel->make(Studio::class)->connection() !== Studio::UNLINKED) {
+            return;
+        }
+
+        if (! $this->avatarStarted) {
+            $this->avatarStarted = true;
+            $this->avatarArrivesBeforeLinking();
+        }
+
+        $line = $this->getScreen()->isLinkingForTheFirstTime() ? 'token' : 'welcome';
+
+        if ($this->avatarSaid === $line || ! $this->avatar()->isReady()) {
+            return;
+        }
+
+        $this->avatarSaid = $line;
+        $this->avatar()->speak($line);
+    }
+
     protected function screenTicked(): void
     {
+        $this->showTheAvatarWhileNotLinked();
         $this->askForTheTokenWhenNotLinked();
         $this->askAboutTheBridgeOnce();
         $this->followTheBridgeWhenItConnects();
+        $this->showTheBridgeWhenAskedInTheApp();
+        $this->backToInsightsOnceTheBridgeQuestionIsDone();
         $this->reportTheBridgeWhenItChanges();
         $this->laravel->make(BridgeKeeper::class)->keep();
         $this->openInsightsWhenFixesAreAsked();
@@ -458,6 +661,7 @@ class StudioCommand extends Command implements HasScreen
         $this->workTogetherWhenAsked();
         $this->startWhatTheDeveloperAgreed();
         $this->openTheWorkOnceItStarts();
+        $this->moveOnToTheScanOnce();
 
         if ($this->repository === null || time() - $this->pingedAt < self::PING_EVERY_SECONDS) {
             return;

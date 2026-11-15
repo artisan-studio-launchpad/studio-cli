@@ -284,6 +284,7 @@ it('shows what a developer sees on a brand new project, not linked and nothing s
     $dashboard = ($this->visibleText)(Artisan::output());
 
     expect($dashboard)->toContain('Welcome to Artisan Studio')->toContain('Press s to paste your token.')->not->toContain('Not scanned yet')
+        ->toContain(app(Studio::class)->signInUrl())->toContain("I'm SAMI")
         ->and(app(Studio::class)->isLinked())->toBeFalse();
 });
 

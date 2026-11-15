@@ -34,7 +34,8 @@ final class Alert extends Component
         $side = $canvas->span('│', $accent);
         $line = fn (string $content): string => $side.$canvas->span('  ', 'ink').$canvas->cell($content, $inside).$canvas->span('  ', 'ink').$side;
         $heading = $canvas->wrap($title, $inside);
-        $body = $canvas->wrap((string) $this->getDescription($state), $inside);
+        $description = (string) $this->getDescription($state);
+        $body = $description === '' ? [] : $canvas->wrap($description, $inside);
 
         return [
             $canvas->span('╭'.str_repeat('─', $width - 2).'╮', $accent),

@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use ArtisanStudio\StudioCli\Bridge\BridgeBeat;
 use ArtisanStudio\StudioCli\Bridge\BridgeConsent;
 use ArtisanStudio\StudioCli\Bridge\BridgeDetection;
 use ArtisanStudio\StudioCli\Bridge\BridgeGate;
@@ -12,14 +13,17 @@ use ArtisanStudio\StudioCli\Bridge\ClaudeAccount;
 use ArtisanStudio\StudioCli\Bridge\Runners;
 use ArtisanStudio\StudioCli\Bridge\Shell;
 use ArtisanStudio\StudioCli\Console\StudioCommand;
+use ArtisanStudio\StudioCli\Dashboard\DashboardSnapshot;
 use ArtisanStudio\StudioCli\EnvFile;
 use ArtisanStudio\StudioCli\Presence;
 use ArtisanStudio\StudioCli\Saloon\Requests\ListProjectsRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\ReportBridgeRequest;
+use ArtisanStudio\StudioCli\Saloon\Requests\ShowBridgeRequest;
 use ArtisanStudio\StudioCli\Studio;
 use ArtisanStudio\StudioCli\Terminal\Action;
 use ArtisanStudio\StudioCli\Terminal\Canvas;
 use ArtisanStudio\StudioCli\Terminal\ScreenContainer;
+use ArtisanStudio\StudioCli\Terminal\ScreenRequests;
 use ArtisanStudio\StudioCli\Terminal\Settings;
 use Illuminate\Console\OutputStyle;
 use Illuminate\Support\Facades\Lang;
@@ -75,6 +79,7 @@ beforeEach(function (): void {
         app()->forgetInstance(ClaudeAccount::class);
         app()->forgetInstance(Runners::class);
         app()->forgetInstance(BridgeDetection::class);
+        app()->forgetInstance(BridgeGate::class);
         app()->forgetInstance(BridgeSetup::class);
         @unlink(BridgeKey::path());
         app()->forgetInstance(BridgeKeeper::class);
@@ -249,6 +254,8 @@ it('puts the bridge status at the right end of the key hints on the same line, a
 });
 
 it('opens the settings on the bridge row when the status is clicked, from every screen that shows the key hints', function (string $from): void {
+    BridgeConsent::make()->refuse();
+
     match ($from) {
         'a tab' => null,
         'another tab' => ($this->press)('2'),
@@ -323,11 +330,583 @@ it('tells the studio where the bridge stands when it changes, and not again unti
     expect(($this->told)())->toBe([BridgeGate::OFF, BridgeGate::ON, BridgeGate::ATTENTION]);
 });
 
+it('says the no was a no, so a question asked in the app is answered there instead of timing out', function (): void {
+    ($this->machine)();
+
+    app(BridgeSetup::class)->choose(BridgeSetup::NO);
+
+    $bodies = collect(Saloon::mockClient()->getRecordedResponses())
+        ->map(fn ($response) => $response->getPendingRequest())
+        ->filter(fn ($request): bool => $request->getRequest() instanceof ReportBridgeRequest)
+        ->map(fn ($request): array => $request->body()->all());
+
+    expect($bodies->all())->toBe([['state' => BridgeGate::OFF, 'runner' => 'claude', 'answer' => 'declined']]);
+});
+
+it('reads the question the app asked from the snapshot', function (): void {
+    expect(DashboardSnapshot::fromApi(['bridge' => ['state' => 'off', 'held' => true, 'key' => false, 'asked' => 'question-1']])->bridgeAsked)->toBe('question-1')
+        ->and(DashboardSnapshot::fromApi(['bridge' => ['state' => 'off', 'held' => true, 'key' => false]])->bridgeAsked)->toBeNull();
+});
+
+/**
+ * The studio's answer to the small question the terminal asks every few
+ * seconds: which question, if any, the developer asked in the app. Change
+ * `asked` on what it returns to ask, or to take the question back.
+ */
+function theAppAsks(?string $question): stdClass
+{
+    $app = new stdClass;
+    $app->asked = $question;
+
+    Saloon::fake([
+        ListProjectsRequest::class => MockResponse::make(['projects' => [['slug' => '1', 'name' => 'Artisan Studio', 'repo' => 'acme/studio']]]),
+        ReportBridgeRequest::class => MockResponse::make('', 204),
+        ShowBridgeRequest::class => fn (): MockResponse => MockResponse::make(['asked' => $app->asked]),
+    ]);
+
+    return $app;
+}
+
+beforeEach(function (): void {
+    $this->tick = function (): void {
+        (fn () => $this->bridgePolledAt = 0)->call($this->command);
+        (fn () => $this->showTheBridgeWhenAskedInTheApp())->call($this->command);
+        (fn () => $this->backToInsightsOnceTheBridgeQuestionIsDone())->call($this->command);
+    };
+});
+
+it('opens the bridge question the moment the app asks, once for each question, and never asks by itself again after a no', function (): void {
+    ($this->machine)();
+    BridgeConsent::make()->refuse();
+    $app = theAppAsks('question-1');
+    app(Studio::class)->projects();
+    (fn () => $this->repository = 'acme/studio')->call($this->command);
+
+    ($this->tick)();
+
+    $names = array_map(fn (array $entry): string => $entry['action']->getName(), (fn (): array => $this->settingsActions())->call(($this->studio)()));
+
+    expect(($this->studio)()->settingsAreOpen())->toBeTrue()
+        ->and(($this->studio)()->showsPanel())->toBeTrue()
+        ->and($names)->toBe(['allow', 'keep-off']);
+
+    ($this->studio)()->backInSettings();
+    (fn () => $this->bridgeQuestionOpen = false)->call($this->command);
+    ($this->tick)();
+
+    expect(($this->studio)()->settingsAreOpen())->toBeFalse();
+
+    $app->asked = 'question-2';
+    ($this->tick)();
+
+    expect(($this->studio)()->settingsAreOpen())->toBeTrue();
+});
+
+it('asks the studio every couple of seconds, not on every pass of the screen', function (): void {
+    ($this->machine)();
+    BridgeConsent::make()->refuse();
+    theAppAsks('question-1');
+    app(Studio::class)->projects();
+    (fn () => $this->repository = 'acme/studio')->call($this->command);
+    $asks = fn (): int => collect(Saloon::mockClient()->getRecordedResponses())
+        ->filter(fn ($response): bool => $response->getPendingRequest()->getRequest() instanceof ShowBridgeRequest)
+        ->count();
+
+    ($this->tick)();
+    (fn () => $this->showTheBridgeWhenAskedInTheApp())->call($this->command);
+    (fn () => $this->showTheBridgeWhenAskedInTheApp())->call($this->command);
+
+    expect($asks())->toBe(1);
+});
+
+it('drops the question and goes back to Insights when the developer presses Not now in the app', function (): void {
+    ($this->machine)();
+    BridgeConsent::make()->refuse();
+    $app = theAppAsks('question-1');
+    app(Studio::class)->projects();
+    (fn () => $this->repository = 'acme/studio')->call($this->command);
+
+    ($this->tick)();
+    ($this->tick)();
+
+    expect(($this->studio)()->showsPanel())->toBeTrue()
+        ->and(app(ScreenRequests::class)->take())->toBeNull();
+
+    $app->asked = null;
+    ($this->tick)();
+
+    expect(($this->studio)()->settingsAreOpen())->toBeFalse()
+        ->and(app(ScreenRequests::class)->take()['tab'] ?? null)->toBe('insights')
+        ->and(BridgeConsent::make()->choice())->toBeFalse();
+});
+
+it('keeps the question open when the studio cannot be reached for a moment', function (): void {
+    ($this->machine)();
+    BridgeConsent::make()->refuse();
+    theAppAsks('question-1');
+    app(Studio::class)->projects();
+    (fn () => $this->repository = 'acme/studio')->call($this->command);
+
+    ($this->tick)();
+
+    Saloon::fake([ShowBridgeRequest::class => MockResponse::make('', 500)]);
+    ($this->tick)();
+
+    expect(($this->studio)()->showsPanel())->toBeTrue();
+});
+
+it('shows what is being allowed and both answers together, even on a short screen', function (): void {
+    ($this->machine)();
+    $screen = ($this->studio)();
+    $screen->openPanel([app(BridgeSetup::class)->askPanel()]);
+
+    $plain = (string) preg_replace('/\e\[[0-9;?]*[A-Za-z]/', '', $screen->render(100, 16, 'insights'));
+
+    expect($plain)->toContain(__('studio-cli::bridge.consent.question'))
+        ->toContain(__('studio-cli::bridge.consent.yes'))
+        ->toContain(__('studio-cli::bridge.consent.no'));
+});
+
+it('goes back to the Insights tab once the question the app asked is answered, or put away with Esc', function (string $how): void {
+    ($this->machine)();
+    BridgeConsent::make()->refuse();
+    theAppAsks('question-1');
+    app(Studio::class)->projects();
+    (fn () => $this->repository = 'acme/studio')->call($this->command);
+
+    ($this->tick)();
+
+    expect(($this->studio)()->showsPanel())->toBeTrue()
+        ->and(app(ScreenRequests::class)->take())->toBeNull();
+
+    $how === 'esc' || app(BridgeSetup::class)->choose(BridgeSetup::NO);
+    ($this->studio)()->closeSettings();
+    ($this->tick)();
+
+    expect(app(ScreenRequests::class)->take()['tab'] ?? null)->toBe('insights')
+        ->and(app(ScreenRequests::class)->take())->toBeNull();
+})->with(['esc' => 'esc', 'a no' => 'no']);
+
 it('lets the developer change the answer later in Settings', function (): void {
     ($this->machine)();
+    BridgeConsent::make()->refuse();
     ($this->press)('s');
 
     $actions = array_map(fn (array $entry): string => $entry['action']->getName(), (fn (): array => $this->settingsActions())->call(($this->studio)()));
 
     expect($actions)->toContain('bridge');
+});
+
+it('asks again when the CLI is linked with a new token, because an answer belongs to the link it was given on', function (): void {
+    $file = sys_get_temp_dir().'/studio-link-'.bin2hex(random_bytes(6)).'.json';
+
+    config(['studio-cli.token' => 'first-token']);
+    (new BridgeConsent($file, '/checkout'))->allow();
+
+    expect((new BridgeConsent($file, '/checkout'))->choice())->toBeTrue();
+
+    config(['studio-cli.token' => 'a-new-token-after-reset']);
+
+    expect((new BridgeConsent($file, '/checkout'))->choice())->toBeNull();
+
+    config(['studio-cli.token' => 'first-token']);
+
+    expect((new BridgeConsent($file, '/checkout'))->choice())->toBeTrue()
+        ->and((string) file_get_contents($file))->not->toContain('first-token');
+
+    @unlink($file);
+});
+
+it('treats an answer recorded before it was tied to a link as not given, so nobody is answered for', function (): void {
+    $file = sys_get_temp_dir().'/studio-old-'.bin2hex(random_bytes(6)).'.json';
+
+    file_put_contents($file, json_encode([hash('xxh128', '/checkout') => ['allowed' => true, 'at' => now()->toIso8601String(), 'checkout' => '/checkout']]));
+
+    expect((new BridgeConsent($file, '/checkout'))->choice())->toBeNull();
+
+    @unlink($file);
+});
+
+it('forgets the bridge on this machine when the studio turns the linked token away, as it does after Reset Scan', function (): void {
+    BridgeConsent::make()->allow();
+    BridgeKey::remember(true);
+
+    expect(BridgeConsent::make()->choice())->toBeTrue()->and(BridgeKey::isSaved())->toBeTrue();
+
+    Saloon::fake([ListProjectsRequest::class => MockResponse::make(['message' => 'Unauthenticated.'], 401)]);
+
+    expect(fn () => app(Studio::class)->projects())->toThrow(RuntimeException::class);
+
+    expect(BridgeConsent::make()->choice())->toBeNull()
+        ->and(BridgeKey::isSaved())->toBeFalse();
+});
+
+it('keeps a yes given under the new token when a request still carrying the previous token is turned away', function (): void {
+    config(['studio-cli.token' => 'the-previous-token']);
+
+    Saloon::fake([ListProjectsRequest::class => function () {
+        config(['studio-cli.token' => 'the-new-token']);
+        BridgeConsent::make()->allow();
+        BridgeKey::remember(true);
+
+        return MockResponse::make(['message' => 'Unauthenticated.'], 401);
+    }]);
+
+    expect(fn () => app(Studio::class)->projects())->toThrow(RuntimeException::class);
+
+    expect(BridgeConsent::make()->choice())->toBeTrue()
+        ->and(BridgeKey::isSaved())->toBeTrue();
+});
+
+it('still forgets a yes that was given under the very token the studio turns away', function (): void {
+    config(['studio-cli.token' => 'the-linked-token']);
+    BridgeConsent::make()->allow();
+
+    Saloon::fake([ListProjectsRequest::class => MockResponse::make(['message' => 'Unauthenticated.'], 401)]);
+
+    expect(fn () => app(Studio::class)->projects())->toThrow(RuntimeException::class);
+
+    expect(BridgeConsent::make()->choice())->toBeNull();
+});
+
+it('leaves the bridge alone when a token only being tried in Settings is the one turned away', function (): void {
+    BridgeConsent::make()->allow();
+
+    Saloon::fake([ListProjectsRequest::class => MockResponse::make(['message' => 'Unauthenticated.'], 401)]);
+
+    expect(fn () => app(Studio::class)->withToken('a-token-being-tried')->projects())->toThrow(RuntimeException::class);
+
+    expect(BridgeConsent::make()->choice())->toBeTrue();
+});
+
+it('tells the studio while the bridge question is open, and again once it has been answered, so it waits for the answer', function (): void {
+    ($this->machine)();
+    app(Studio::class)->projects();
+    (fn () => $this->askedAboutTheBridge = true)->call($this->command);
+
+    $report = fn (): mixed => (fn (): mixed => $this->reportTheBridgeWhenItChanges())->call($this->command);
+    $answers = fn (): array => collect(Saloon::mockClient()->getRecordedResponses())
+        ->map(fn ($response) => $response->getPendingRequest())
+        ->filter(fn ($request): bool => $request->getRequest() instanceof ReportBridgeRequest)
+        ->map(fn ($request): ?string => $request->body()->all()['answer'] ?? null)
+        ->values()
+        ->all();
+
+    $report();
+    $report();
+
+    expect($answers())->toBe(['asking']);
+
+    app(BridgeSetup::class)->choose(BridgeSetup::NO);
+    $report();
+
+    expect($answers())->toBe(['asking', 'declined', null]);
+});
+
+it('does not say it is asking when nothing is asked: already answered, or no AI tool to ask about', function (): void {
+    ($this->machine)();
+    app(Studio::class)->projects();
+    (fn () => $this->askedAboutTheBridge = true)->call($this->command);
+    BridgeConsent::make()->allow();
+
+    $report = fn (): mixed => (fn (): mixed => $this->reportTheBridgeWhenItChanges())->call($this->command);
+    $answers = fn (): array => collect(Saloon::mockClient()->getRecordedResponses())
+        ->map(fn ($response) => $response->getPendingRequest())
+        ->filter(fn ($request): bool => $request->getRequest() instanceof ReportBridgeRequest)
+        ->map(fn ($request): ?string => $request->body()->all()['answer'] ?? null)
+        ->values()
+        ->all();
+
+    $report();
+
+    expect($answers())->not->toContain('asking');
+
+    BridgeConsent::make()->forget();
+    ($this->machine)(false, false);
+    $report();
+
+    expect($answers())->not->toContain('asking');
+});
+
+describe('the bridge question at the top of the settings', function (): void {
+    beforeEach(function (): void {
+        $this->plain = fn (string $line): string => (string) preg_replace(['/\e\[[0-9;?]*[A-Za-z]/', '/\e\]8;[^;\e]*;[^\e]*\e\\\\/'], '', $line);
+        $this->rows = fn (int $width = 80, int $height = 24): array => array_map($this->plain, ($this->studio)()->lines($width, $height));
+        $this->at = fn (string $needle, array $rows): int|false => collect($rows)->search(fn (string $row): bool => str_contains($row, $needle));
+        $this->open = function (): void {
+            ($this->machine)();
+            app(Studio::class)->projects();
+            ($this->press)('s');
+        };
+    });
+
+    it('shows the question first, the two answers right under it, and the menu after, all inside a 24 row terminal', function (): void {
+        ($this->open)();
+
+        $rows = ($this->rows)();
+        $question = ($this->at)(mb_substr(__('studio-cli::bridge.consent.question'), 0, 30), $rows);
+        $yes = ($this->at)(__('studio-cli::bridge.consent.yes'), $rows);
+        $no = ($this->at)(__('studio-cli::bridge.consent.no'), $rows);
+        $menu = ($this->at)('Link with a new token', $rows);
+        $token = ($this->at)('Token', $rows);
+
+        expect(count($rows))->toBeLessThanOrEqual(24)
+            ->and($question)->not->toBeFalse()
+            ->and($yes)->toBeGreaterThan($question)
+            ->and($no)->toBe($yes + 1)
+            ->and($menu)->toBeGreaterThan($no)
+            ->and($menu)->toBeLessThan(24)
+            ->and($token)->toBeGreaterThan($menu);
+    });
+
+    it('keeps the account line in the block and the words of the question as they were', function (): void {
+        ($this->open)();
+
+        $text = implode("\n", ($this->rows)(120));
+        $who = app(ClaudeAccount::class)->who();
+
+        expect($text)->toContain(__('studio-cli::bridge.consent.question'))
+            ->and(app(BridgeSetup::class)->questionLines()['account'])->toBe($who === null ? null : __('studio-cli::bridge.consent.account', ['who' => $who]));
+
+        $who === null || expect($text)->toContain(__('studio-cli::bridge.consent.account', ['who' => $who]));
+    });
+
+    it('answers from the block, and the screen goes back to how it was', function (): void {
+        ($this->open)();
+
+        ($this->press)("\r");
+
+        $rows = ($this->rows)();
+
+        expect(BridgeConsent::make()->isAllowed())->toBeTrue()
+            ->and(($this->at)(mb_substr(__('studio-cli::bridge.consent.question'), 0, 30), $rows))->toBeFalse()
+            ->and(($this->at)('Token', $rows))->toBeLessThan(($this->at)('Link with a new token', $rows))
+            ->and(collect((fn (): array => $this->settingsActions())->call(($this->studio)()))->map(fn (array $entry): string => $entry['action']->getName())->all())->toContain('bridge')->not->toContain('allow');
+    });
+
+    it('is not shown once the developer has said no, and the screen is as it was', function (): void {
+        ($this->machine)();
+        BridgeConsent::make()->refuse();
+        app(Studio::class)->projects();
+        ($this->press)('s');
+
+        $rows = ($this->rows)();
+
+        expect(($this->at)(mb_substr(__('studio-cli::bridge.consent.question'), 0, 30), $rows))->toBeFalse()
+            ->and(($this->at)('Token', $rows))->toBeLessThan(($this->at)('Link with a new token', $rows));
+    });
+
+    it('opens on the first answer without answering for the developer, and the status key goes there too', function (): void {
+        ($this->machine)();
+        ($this->asks)();
+
+        $screen = ($this->studio)();
+
+        expect($screen->settingsAreOpen())->toBeTrue()
+            ->and((fn (): string => $this->selectedSetting()['action']->getName())->call($screen))->toBe('allow')
+            ->and(BridgeConsent::make()->choice())->toBeNull();
+    });
+
+    it('stays inside the terminal at the narrow widths, with the answers on screen', function (int $width): void {
+        ($this->open)();
+
+        $rows = ($this->rows)($width, 24);
+
+        expect(($this->at)(__('studio-cli::bridge.consent.yes'), $rows))->not->toBeFalse()
+            ->and(collect($rows)->every(fn (string $row): bool => mb_strwidth(rtrim($row)) <= $width))->toBeTrue();
+    })->with([72, 80, 100]);
+});
+
+describe('the bridge line on the settings screen follows the live state', function (): void {
+    afterEach(function (): void {
+        BridgeBeat::unmark();
+    });
+
+    it('says the bridge is not running while it is allowed and not running, and stops saying it the moment it runs, without a restart', function (): void {
+        ($this->machine)();
+        app(Studio::class)->projects();
+        BridgeConsent::make()->allow();
+
+        ($this->press)('s');
+
+        $drawn = fn (): string => (string) preg_replace(['/\e\[[0-9;?]*[A-Za-z]/', '/\e\]8;[^;\e]*;[^\e]*\e\\\\/'], '', implode("\n", ($this->studio)()->lines(160, 30)));
+        $stopped = mb_substr(__('studio-cli::bridge.cli.explain.stopped'), 0, 40);
+        $running = mb_substr(__('studio-cli::bridge.cli.explain.on'), 0, 30);
+
+        expect(preg_replace('/\s+/', ' ', $drawn()))->toContain(preg_replace('/\s+/', ' ', $stopped));
+
+        expect(BridgeBeat::mark())->toBeTrue();
+
+        ($this->studio)()->refreshState();
+
+        $after = preg_replace('/\s+/', ' ', $drawn());
+
+        expect($after)->not->toContain(preg_replace('/\s+/', ' ', $stopped))
+            ->and($after)->toContain(preg_replace('/\s+/', ' ', $running));
+    });
+
+    it('does not say it when the bridge is allowed and already running', function (): void {
+        ($this->machine)();
+        app(Studio::class)->projects();
+        BridgeConsent::make()->allow();
+        BridgeBeat::mark();
+
+        ($this->press)('s');
+
+        $text = preg_replace('/\s+/', ' ', (string) preg_replace(['/\e\[[0-9;?]*[A-Za-z]/', '/\e\]8;[^;\e]*;[^\e]*\e\\\\/'], '', implode("\n", ($this->studio)()->lines(160, 30))));
+
+        expect($text)->not->toContain(mb_substr(__('studio-cli::bridge.cli.explain.stopped'), 0, 40));
+    });
+});
+
+describe('moving on to the Scan tab once the setup is done', function (): void {
+    beforeEach(function (): void {
+        $this->ready = function (): void {
+            ($this->machine)();
+            app(Studio::class)->projects();
+            BridgeConsent::make()->allow();
+            BridgeBeat::mark();
+        };
+        $this->moveOn = fn () => (fn () => $this->moveOnToTheScanOnce())->call($this->command);
+        $this->tabNow = fn (): string => (fn (): string => $this->getScreen()->tab($this->screenTab)->getKey())->call($this->command);
+        $this->act = fn (string $action) => (fn () => $this->handleScreenAction($action))->call($this->command);
+        $this->goBackToTheDashboard = fn () => (fn () => $this->showScreenTab('dashboard'))->call($this->command);
+    });
+
+    afterEach(function (): void {
+        BridgeBeat::unmark();
+        $this->travelBack();
+    });
+
+    it('stays on the dashboard for three seconds from when it is first ready, then switches to Scan, once', function (): void {
+        ($this->ready)();
+
+        ($this->moveOn)();
+        $this->travel(2)->seconds();
+        ($this->moveOn)();
+
+        expect(($this->tabNow)())->toBe('dashboard');
+
+        $this->travel(2)->seconds();
+        ($this->moveOn)();
+
+        expect(($this->tabNow)())->toBe('scan');
+
+        ($this->goBackToTheDashboard)();
+        $this->travel(30)->seconds();
+        ($this->moveOn)();
+        ($this->moveOn)();
+
+        expect(($this->tabNow)())->toBe('dashboard');
+    });
+
+    it('counts the three seconds from when everything is ready, not from when the CLI started', function (): void {
+        ($this->machine)();
+        app(Studio::class)->projects();
+
+        ($this->moveOn)();
+        $this->travel(60)->seconds();
+        ($this->moveOn)();
+
+        expect(($this->tabNow)())->toBe('dashboard');
+
+        BridgeConsent::make()->allow();
+        BridgeBeat::mark();
+        ($this->moveOn)();
+
+        expect(($this->tabNow)())->toBe('dashboard');
+
+        $this->travel(3)->seconds();
+        ($this->moveOn)();
+
+        expect(($this->tabNow)())->toBe('scan');
+    });
+
+    it('does not switch when the person does anything after it is ready, a key, a click or a scroll', function (string $action): void {
+        ($this->ready)();
+        ($this->moveOn)();
+
+        ($this->act)($action);
+        $this->travel(10)->seconds();
+        ($this->moveOn)();
+
+        expect(($this->tabNow)())->toBe('dashboard');
+    })->with(['a scroll' => 'scroll:1', 'a click' => 'click:5:5', 'the help key' => 'help']);
+
+    it('does not count what the person did before it was ready, such as answering the bridge question', function (): void {
+        ($this->machine)();
+        app(Studio::class)->projects();
+        ($this->act)('settings:down');
+        ($this->act)('settings:select');
+        BridgeConsent::make()->allow();
+        BridgeBeat::mark();
+        ($this->studio)()->closeSettings();
+
+        ($this->moveOn)();
+        $this->travel(4)->seconds();
+        ($this->moveOn)();
+
+        expect(($this->tabNow)())->toBe('scan');
+    });
+
+    it('does not switch while a menu, a prompt or the settings are open, and waits until they are away', function (): void {
+        ($this->ready)();
+        ($this->studio)()->openSettings();
+
+        ($this->moveOn)();
+        $this->travel(10)->seconds();
+        ($this->moveOn)();
+
+        expect(($this->tabNow)())->toBe('dashboard');
+
+        ($this->studio)()->closeSettings();
+        ($this->moveOn)();
+
+        expect(($this->tabNow)())->toBe('dashboard');
+
+        $this->travel(3)->seconds();
+        ($this->moveOn)();
+
+        expect(($this->tabNow)())->toBe('scan');
+    });
+
+    it('does not switch when something is undecided or failing', function (string $case): void {
+        match ($case) {
+            'the bridge question is waiting' => (function (): void {
+                ($this->machine)();
+                app(Studio::class)->projects();
+            })(),
+            'the bridge was refused' => (function (): void {
+                ($this->machine)();
+                app(Studio::class)->projects();
+                BridgeConsent::make()->refuse();
+            })(),
+            'allowed but not running' => (function (): void {
+                ($this->machine)();
+                app(Studio::class)->projects();
+                BridgeConsent::make()->allow();
+            })(),
+            'no AI to connect' => (function (): void {
+                ($this->machine)(false, false);
+                app(Studio::class)->projects();
+            })(),
+            'the token is turned away' => (function (): void {
+                ($this->machine)();
+                Saloon::fake([ListProjectsRequest::class => MockResponse::make(['message' => 'Unauthenticated.'], 401)]);
+                BridgeConsent::make()->allow();
+                BridgeBeat::mark();
+                expect(fn () => app(Studio::class)->projects())->toThrow(RuntimeException::class);
+            })(),
+            'the bridge question is open on screen' => (function (): void {
+                ($this->ready)();
+                (fn () => $this->bridgeQuestionOpen = true)->call($this->command);
+            })(),
+        };
+
+        ($this->moveOn)();
+        $this->travel(30)->seconds();
+        ($this->moveOn)();
+
+        expect(($this->tabNow)())->toBe('dashboard');
+    })->with(['the bridge question is waiting', 'the bridge was refused', 'allowed but not running', 'no AI to connect', 'the token is turned away', 'the bridge question is open on screen']);
 });

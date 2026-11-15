@@ -26,8 +26,8 @@ final readonly class NotConnected
         $message = match ($this->studio->connection()) {
             Studio::UNLINKED => [
                 'cyan',
-                'Welcome to Artisan Studio',
-                "Let's link this project. It takes a minute, and this screen fills with your project's health, insights and builds. ".self::WHERE_THE_TOKEN_IS,
+                __('studio-cli::welcome.title'),
+                __('studio-cli::welcome.body'),
                 'Press s to paste your token.',
             ],
             Studio::REFUSED => [
@@ -63,8 +63,11 @@ final readonly class NotConnected
 
         [$colour, $title, $detail, $hint] = $message;
 
+        $signIn = $this->studio->signInUrl();
+
         return [
             Alert::make($title)->colour($colour)->description($detail)->descriptionColour('soft'),
+            ...($this->studio->connection() === Studio::UNLINKED ? [Text::make($signIn)->colour('cyan')->bold()->link(__('studio-cli::welcome.open'), $signIn)] : []),
             Text::make($hint)->colour('cyan'),
         ];
     }

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ArtisanStudio\StudioCli\Terminal\Concerns;
 
 use ArtisanStudio\StudioCli\BackgroundTasks;
+use ArtisanStudio\StudioCli\Bridge\BridgeSetup;
 use ArtisanStudio\StudioCli\Terminal\Action;
 use ArtisanStudio\StudioCli\Terminal\Canvas;
 use ArtisanStudio\StudioCli\Terminal\Contracts\HasScreen;
@@ -76,6 +77,17 @@ trait InteractsWithScreen
         "\x7f" => 'settings:erase',
         "\x08" => 'settings:erase',
         "\x03" => 'quit',
+    ];
+
+    /**
+     * The keys that scroll while a token is being typed: only the ones that cannot be part of it, so
+     * a person without a mouse wheel can still reach everything on the screen.
+     */
+    private const array SCREEN_TYPING_SCROLL_KEYS = [
+        "\e[A" => 'scroll:-1',
+        "\e[B" => 'scroll:1',
+        "\e[5~" => 'page-up',
+        "\e[6~" => 'page-down',
     ];
 
     private const int SCREEN_FLASH_SECONDS = 3;
@@ -309,6 +321,8 @@ trait InteractsWithScreen
 
     private function handleScreenAction(?string $action): void
     {
+        $action === null || $this->screenActed();
+
         match (true) {
             $action === null => null,
             in_array($action, ['next', 'previous'], true) || str_starts_with($action, 'tab:') => $this->getScreen()->showsTabs() ? $this->showScreenTab(match ($action) {
@@ -351,8 +365,12 @@ trait InteractsWithScreen
         $text = (string) preg_replace('/\e\[20[01]~/', '', $input);
         $typed = (string) preg_replace('/[\x00-\x1f\x7f]/', '', $text);
 
+        $wheel = preg_match_all('/\e\[<(64|65);\d+;\d+[Mm]/', $input, $events);
+
         return match (true) {
             isset(self::SCREEN_TYPING_KEYS[$input]) => self::SCREEN_TYPING_KEYS[$input],
+            isset(self::SCREEN_TYPING_SCROLL_KEYS[$input]) => self::SCREEN_TYPING_SCROLL_KEYS[$input],
+            $wheel > 0 => 'scroll:'.collect($events[1])->sum(fn (string $button): int => $button === '64' ? -self::SCREEN_WHEEL_LINES : self::SCREEN_WHEEL_LINES),
             str_starts_with($text, "\e"), $typed === '' => null,
             default => 'settings:type:'.$typed,
         };
@@ -382,6 +400,11 @@ trait InteractsWithScreen
     protected function screenRefreshed(): void {}
 
     protected function screenTicked(): void {}
+
+    /**
+     * Called each time the person does something on the screen: a key, a click, a scroll.
+     */
+    protected function screenActed(): void {}
 
     /**
      * Called when the screen is about to end or start again, for the command
@@ -459,7 +482,7 @@ trait InteractsWithScreen
      */
     private function openScreenBridge(): void
     {
-        $this->getScreen()->focusSetting('bridge');
+        $this->getScreen()->focusSetting(app(BridgeSetup::class)->isAsking() ? 'allow' : 'bridge');
         $this->screenHelp = false;
         $this->screenScroll = 0;
     }

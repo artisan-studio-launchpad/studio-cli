@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ArtisanStudio\StudioCli;
 
+use ArtisanStudio\StudioCli\Bridge\BridgeConsent;
 use ArtisanStudio\StudioCli\Bridge\BridgeKey;
 use ArtisanStudio\StudioCli\Fix\AutomatedFixes;
 use ArtisanStudio\StudioCli\Saloon\Requests\AskScanQuestionRequest;
@@ -17,10 +18,12 @@ use ArtisanStudio\StudioCli\Saloon\Requests\PickScanRulesRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\PingRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\PlanNodePatchesRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\ReadToolOutputRequest;
+use ArtisanStudio\StudioCli\Saloon\Requests\ReportAiUsageRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\ReportBridgeRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\ReportScanToolProgressRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\RunScanCheckRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\SayGoodbyeRequest;
+use ArtisanStudio\StudioCli\Saloon\Requests\ShowBridgeRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\ShowConventionDetectorsRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\ShowScanChecksRequest;
 use ArtisanStudio\StudioCli\Saloon\Requests\ShowScanDetectorsRequest;
@@ -87,10 +90,34 @@ class Studio
         return $this->hasConnected;
     }
 
-    private function answered(string $connection): void
+    private function answered(string $connection, ?string $sentWith = null): void
     {
         $this->connection = $connection;
         $this->hasConnected = $this->hasConnected || $connection === self::CONNECTED;
+
+        if ($connection === self::REFUSED && $this->token === null) {
+            $this->forgetTheBridge($sentWith ?? $this->token());
+        }
+    }
+
+    /**
+     * ★ A RESET LEAVES NOTHING OF THE BRIDGE ON THIS MACHINE. Reset Scan takes the token away, so the
+     * next thing the studio says to the linked CLI is that it does not know it. What the developer
+     * answered about the bridge, and what the studio last said about their key, were for the link that
+     * has just gone: they are forgotten, and the bridge asks again on the next one. Only the CLI's own
+     * link counts: a token pasted to try in Settings that the studio refuses changes nothing.
+     *
+     * ★ ONLY THE TOKEN THAT WAS REFUSED CAN TAKE ITS OWN ANSWER AWAY. The file is shared by everything
+     * running in this checkout, and a process still holding the previous token (one started before
+     * the new link was pasted, or a request already in flight) is refused too. It used to wipe a
+     * fresh yes given under the new token a moment after it was given. Now the answer goes only when
+     * it was given under the very token the studio refused.
+     */
+    private function forgetTheBridge(string $refusedToken): void
+    {
+        if (app(BridgeConsent::class)->forgetUnder($refusedToken)) {
+            BridgeKey::forget();
+        }
     }
 
     public function withToken(string $token): self
@@ -104,6 +131,8 @@ class Studio
     /** @return list<array{slug: string, name: string, repo: string|null}> */
     public function projects(): array
     {
+        $sentWith = $this->token();
+
         try {
             $response = $this->connector()->send(new ListProjectsRequest);
         } catch (Throwable $unreachable) {
@@ -116,7 +145,7 @@ class Studio
             in_array($response->status(), [401, 403], true) => self::REFUSED,
             $response->successful() => self::CONNECTED,
             default => self::UNREACHABLE,
-        });
+        }, $sentWith);
 
         if ($response->status() === 401 || $response->status() === 403) {
             throw new RuntimeException('The studio does not recognise that token.');
@@ -182,11 +211,38 @@ class Studio
      * Tells the studio whether the AI bridge is connected on this machine
      * (on), not (off), or cannot be because Claude Code is missing or signed
      * out (attention), so the app can hold back what changes code. Nothing
-     * about the account is sent.
+     * about the account is sent. A developer who said no to the studio's
+     * question says so too, so the app can tell that apart from a bridge that
+     * was simply off.
      */
-    public function reportBridge(string $state): void
+    public function reportBridge(string $state, ?string $answer = null): void
     {
-        $this->quietly(new ReportBridgeRequest($this->project(), $state));
+        $this->quietly(new ReportBridgeRequest($this->project(), $state, $answer));
+    }
+
+    /**
+     * The question the developer asked in the app, asking this terminal to
+     * allow the AI bridge: its id while it waits, none once it was answered or
+     * taken back. Null when the studio could not be asked.
+     *
+     * @return array{asked: ?string}|null
+     */
+    public function bridgeAsked(): ?array
+    {
+        $answer = $this->quietly(new ShowBridgeRequest($this->project()));
+
+        return $answer === null ? null : ['asked' => is_string($answer['asked'] ?? null) && $answer['asked'] !== '' ? $answer['asked'] : null];
+    }
+
+    /**
+     * How much of the AI on this machine has been used, as two percentages
+     * with their reset times and nothing else, for the app's footer.
+     *
+     * @param  array{session: ?array{percent: int, resets_at: ?string}, week: ?array{percent: int, resets_at: ?string}}  $usage
+     */
+    public function reportAiUsage(array $usage): void
+    {
+        $this->quietly(new ReportAiUsageRequest($this->project(), $usage));
     }
 
     /**
@@ -524,6 +580,8 @@ class Studio
      */
     private function fetch(Request $request): ?array
     {
+        $sentWith = $this->token();
+
         try {
             $response = $this->connector()->send($request);
         } catch (Throwable) {
@@ -537,7 +595,7 @@ class Studio
             403 => self::FORBIDDEN,
             404 => self::MISSING,
             default => $response->successful() ? self::CONNECTED : self::UNREACHABLE,
-        });
+        }, $sentWith);
 
         return $response->successful() ? $response->json() : null;
     }
@@ -600,6 +658,15 @@ class Studio
     public function url(): string
     {
         return (string) config('studio-cli.url');
+    }
+
+    /**
+     * Where a person signs in with GitHub on the studio this terminal is pointed at. Already signed in,
+     * the studio sends them straight on to their onboarding.
+     */
+    public function signInUrl(): string
+    {
+        return rtrim($this->url(), '/').'/auth/github';
     }
 
     private function token(): string

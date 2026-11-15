@@ -106,8 +106,8 @@ it('takes the packages its owner published, wherever they are installed, and nob
 });
 
 it('knows the owner of a project from the repository it was cloned from', function (): void {
-    expect(Blueprint::ownerOf('artisan-studio-launchpad/studio-platform'))->toBe('artisan-studio-launchpad')
-        ->and(Blueprint::ownerOf('studio-platform'))->toBeNull()
+    expect(Blueprint::ownerOf('acme/storefront'))->toBe('acme')
+        ->and(Blueprint::ownerOf('storefront'))->toBeNull()
         ->and(Blueprint::ownerOf(null))->toBeNull();
 });
 it('maps names, the database\'s own column types, enum casts and relationships, and leaves out a model it cannot read', function (): void {

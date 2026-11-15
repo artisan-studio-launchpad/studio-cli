@@ -9,8 +9,9 @@ namespace ArtisanStudio\StudioCli\Bridge;
  * their own Claude Code login: yes, no, or nothing yet.
  *
  * It is kept on this machine, outside the project and outside git, in a file
- * only the user can read, one entry per checkout. The bridge starts only on a
- * yes. There is no default and nothing that answers for the developer.
+ * only the user can read, one entry per checkout and per link to the studio. The
+ * bridge starts only on a yes. There is no default and nothing that answers for
+ * the developer.
  */
 final class BridgeConsent
 {
@@ -46,7 +47,11 @@ final class BridgeConsent
     {
         $entry = $this->all()[$this->key()] ?? null;
 
-        return is_array($entry) && is_bool($entry['allowed'] ?? null) ? $entry['allowed'] : null;
+        if (! is_array($entry) || ! is_bool($entry['allowed'] ?? null) || ($entry['link'] ?? null) !== $this->link()) {
+            return null;
+        }
+
+        return $entry['allowed'];
     }
 
     public function isAllowed(): bool
@@ -62,6 +67,48 @@ final class BridgeConsent
     public function refuse(): void
     {
         $this->remember(false);
+    }
+
+    /**
+     * Forget the answer for this checkout, whatever it was, so the developer is asked again. Done
+     * when the studio no longer knows this machine's token (Reset Scan takes it away), so a reset
+     * leaves nothing of the bridge behind here.
+     */
+    public function forget(): void
+    {
+        $all = $this->all();
+
+        if (! array_key_exists($this->key(), $all)) {
+            return;
+        }
+
+        unset($all[$this->key()]);
+
+        if ($all === []) {
+            @unlink($this->file);
+
+            return;
+        }
+
+        @file_put_contents($this->file, (string) json_encode($all, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES), LOCK_EX);
+    }
+
+    /**
+     * Forget the answer only if it was given under this token, which the studio has just refused.
+     * An answer given under another token is a different link's, and stays. Whether anything was
+     * forgotten.
+     */
+    public function forgetUnder(string $token): bool
+    {
+        $entry = $this->all()[$this->key()] ?? null;
+
+        if (! is_array($entry) || (isset($entry['link']) && $entry['link'] !== hash('xxh128', $token))) {
+            return false;
+        }
+
+        $this->forget();
+
+        return true;
     }
 
     public function path(): string
@@ -80,7 +127,7 @@ final class BridgeConsent
         $before = umask(0177);
 
         try {
-            file_put_contents($this->file, (string) json_encode([...$this->all(), $this->key() => ['allowed' => $allowed, 'at' => now()->toIso8601String(), 'checkout' => $this->checkout]], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES), LOCK_EX);
+            file_put_contents($this->file, (string) json_encode([...$this->all(), $this->key() => ['allowed' => $allowed, 'link' => $this->link(), 'at' => now()->toIso8601String(), 'checkout' => $this->checkout]], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES), LOCK_EX);
         } finally {
             umask($before);
         }
@@ -101,5 +148,17 @@ final class BridgeConsent
     private function key(): string
     {
         return hash('xxh128', $this->checkout);
+    }
+
+    /**
+     * ★ AN ANSWER BELONGS TO THE LINK IT WAS GIVEN ON. It is kept per checkout, so on its own it
+     * outlived everything the studio does to a project: Reset Scan, a new token, a fresh start. The
+     * next link then found a yes from long ago and turned the bridge on without asking. The answer
+     * is stored with a fingerprint of the token it was given under, and counts only while the CLI is
+     * linked with that same token. A new token is a new question; the token itself is never stored.
+     */
+    private function link(): string
+    {
+        return hash('xxh128', (string) config('studio-cli.token'));
     }
 }
