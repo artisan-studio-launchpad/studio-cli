@@ -376,8 +376,9 @@ return [
     |
     | `public_keys` are the Ed25519 public keys, base64 and comma separated
     | in STUDIO_CLI_BRIDGE_KEYS, that Artisan Studio signs its AI tasks with.
-    | A task that is not signed by one of them is refused, and with none set
-    | every task is.
+    | A task that is not signed by one of them is refused. Left empty, the
+    | studio's own key, built into this package, is the one used; set it only
+    | to point this at a studio of your own.
     |
     | `consent_file` is where the developer's yes or no is kept. Left empty,
     | it is ~/.config/artisan-studio/bridge.json, readable by the user only.

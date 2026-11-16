@@ -33,7 +33,7 @@ class BridgeWorker
         }
 
         $startedAt = microtime(true);
-        $refused = Limits::unsigned($task, $this->studio->project(), array_values(array_filter((array) config('studio-cli.bridge.public_keys'), is_string(...))), time());
+        $refused = Limits::unsigned($task, $this->studio->project(), TrustedKeys::all(), time());
         $checked = $refused ?? Limits::check($task);
 
         $outcome = is_string($checked)
