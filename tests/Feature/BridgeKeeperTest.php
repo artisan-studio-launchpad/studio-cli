@@ -123,3 +123,19 @@ it('starts a bridge that died again, but not within a minute of the last try', f
 
     expect($this->started)->toBe(2);
 });
+
+it('hands a task the token the studio has now, so a link made while the studio is open reaches the bridge', function (): void {
+    config(['studio-cli.url' => 'https://studio.example', 'studio-cli.token' => 'the-new-token', 'studio-cli.project' => 'my-project']);
+
+    expect(BackgroundTasks::linkEnvironment())->toBe([
+        'ARTISAN_STUDIO_URL' => 'https://studio.example',
+        'ARTISAN_STUDIO_TOKEN' => 'the-new-token',
+        'ARTISAN_STUDIO_PROJECT' => 'my-project',
+    ]);
+});
+
+it('takes a token out of a task\'s environment once it is gone, so the project\'s file is read instead', function (): void {
+    config(['studio-cli.token' => null, 'studio-cli.project' => '']);
+
+    expect(BackgroundTasks::linkEnvironment())->toMatchArray(['ARTISAN_STUDIO_TOKEN' => false, 'ARTISAN_STUDIO_PROJECT' => false]);
+});
