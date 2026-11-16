@@ -134,4 +134,4 @@ Artisan Studio talks to the terminal over server-sent events, read through a sub
 
 ## Licence
 
-Source-available. See [LICENSE.md](LICENSE.md).
+MIT. See [LICENSE.md](LICENSE.md).
