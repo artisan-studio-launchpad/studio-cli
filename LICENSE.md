@@ -1,33 +1,21 @@
-# Licence
+# MIT License
 
-Copyright © Artisan Studio. All rights reserved.
+Copyright (c) 2026 Artisan Studio Launchpad
 
-This software is published so that developers can read it before installing it. It
-is source-available, not open source.
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-## Permitted use
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
-You may download, install, read and run this software to connect to Artisan
-Studio using credentials issued to you or to your organisation. You may modify
-your own copy to suit your environment.
-
-## Not permitted
-
-Without prior written permission from Artisan Studio, you may not:
-
-- redistribute this software, modified or unmodified, as your own or as part of
-  another product;
-- use it to connect to any service other than Artisan Studio;
-- remove or obscure this notice or any proprietary marking.
-
-Contributions are welcome by pull request. By opening one you agree that your
-contribution may be included under this licence.
-
-## No warranty
-
-This software is provided "as is", without warranty of any kind, express or
-implied. Artisan Studio shall not be liable for any claim, damages or other
-liability arising from its use, including any loss of data in a mirrored
-worktree.
-
-For licensing enquiries, contact Artisan Studio.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

@@ -9,7 +9,7 @@
         "static-analysis"
     ],
     "homepage": "https://github.com/artisan-studio-projects/studio-cli",
-    "license": "LicenseRef-Artisan-Studio",
+    "license": "MIT",
     "authors": [
         {
             "name": "Adam Lee",
