@@ -323,7 +323,7 @@ it('refuses a task the studio did not sign, runs nothing for it, logs it and rep
     'a task signed with a key other than the built-in one, when none is set' => fn () => [aSignedTask(), []],
 ]);
 
-it('trusts the studio\'s own built-in key when none is set, and a key that is set replaces it', function (): void {
+it('trusts the studio\'s own built-in key when none is set, and a key that is set is trusted as well', function (): void {
     config(['studio-cli.bridge.public_keys' => []]);
 
     expect(TrustedKeys::all())->toBe([TrustedKeys::STUDIO])
@@ -333,11 +333,11 @@ it('trusts the studio\'s own built-in key when none is set, and a key that is se
 
     config(['studio-cli.bridge.public_keys' => [$own]]);
 
-    expect(TrustedKeys::all())->toBe([$own]);
+    expect(TrustedKeys::all())->toBe([TrustedKeys::STUDIO, $own]);
 
-    config(['studio-cli.bridge.public_keys' => ['', $own]]);
+    config(['studio-cli.bridge.public_keys' => ['', $own, TrustedKeys::STUDIO]]);
 
-    expect(TrustedKeys::all())->toBe([$own]);
+    expect(TrustedKeys::all())->toBe([TrustedKeys::STUDIO, $own]);
 });
 
 it('refuses a task signed with any other key while the built-in key is in use, and says the signature is wrong', function (): void {
@@ -347,12 +347,13 @@ it('refuses a task signed with any other key while the built-in key is in use, a
         ->and(Limits::unsigned(aSignedTask(seed: 'c'), '1', TrustedKeys::all(), time()))->toBe(__('studio-cli::bridge.signature.invalid'));
 });
 
-it('does not trust the built-in key as well once a key has been set', function (): void {
+it('still trusts the built-in key once a key has been set, so a key left in an environment cannot lock out the studio', function (): void {
     $own = base64_encode(sodium_crypto_sign_publickey(theStudiosKeys('d')));
     config(['studio-cli.bridge.public_keys' => [$own]]);
 
-    expect(TrustedKeys::all())->not->toContain(TrustedKeys::STUDIO)
-        ->and(Limits::unsigned(aSignedTask(seed: 'd'), '1', TrustedKeys::all(), time()))->toBeNull();
+    expect(TrustedKeys::all())->toContain(TrustedKeys::STUDIO, $own)
+        ->and(Limits::unsigned(aSignedTask(seed: 'd'), '1', TrustedKeys::all(), time()))->toBeNull()
+        ->and(Limits::unsigned(aSignedTask(seed: 'c'), '1', TrustedKeys::all(), time()))->toBe(__('studio-cli::bridge.signature.invalid'));
 });
 
 it('accepts a task signed with any one of the studio\'s keys', function (): void {
