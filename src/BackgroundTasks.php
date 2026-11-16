@@ -33,6 +33,25 @@ final class BackgroundTasks
     }
 
     /**
+     * ★ A TASK SEES THE LINK THE STUDIO HAS NOW, NOT THE ONE IT STARTED WITH. A task is a new
+     * process, and a process starts with the environment of the one that made it, which wins over
+     * the project's .env file. Linking, relinking or unlinking inside a running studio changes the
+     * file and the config but not that environment, so a task started afterwards, the bridge most of
+     * all, read the old token and refused the yes that was given under the new one. It looked like
+     * a bridge that would not start until the studio was closed and opened again. A value that is
+     * empty now is taken out of the task's environment, so the file's answer is used.
+     *
+     * @return array<string, string|false>
+     */
+    public static function linkEnvironment(): array
+    {
+        return array_map(
+            fn (string $setting): string|false => is_string($value = config($setting)) && $value !== '' ? $value : false,
+            ['ARTISAN_STUDIO_URL' => 'studio-cli.url', 'ARTISAN_STUDIO_TOKEN' => 'studio-cli.token', 'ARTISAN_STUDIO_PROJECT' => 'studio-cli.project'],
+        );
+    }
+
+    /**
      * A detached task outlives the studio: quitting, restarting or a crash of
      * `php artisan studio` leaves it running, and the next studio follows it.
      *
@@ -49,13 +68,13 @@ final class BackgroundTasks
         $arguments = [PHP_BINARY, 'artisan', ...$command, '--plain', '--no-ansi', '--no-interaction'];
 
         if ($detached) {
-            $launch = new Process(['sh', '-c', 'nohup "$@" > /dev/null 2>&1 & echo $!', 'sh', ...$arguments], $this->root, [TaskJournal::ENV => $journal, self::DETACHED => '1']);
+            $launch = new Process(['sh', '-c', 'nohup "$@" > /dev/null 2>&1 & echo $!', 'sh', ...$arguments], $this->root, [...self::linkEnvironment(), TaskJournal::ENV => $journal, self::DETACHED => '1']);
             $launch->run();
             $pid = (int) trim($launch->getOutput());
             $this->running[$key] = ['process' => null, 'pid' => $pid > 0 ? $pid : null, 'label' => $label, 'journal' => $journal, 'offset' => 0, 'steps' => 0, 'then' => null];
             $this->remember();
         } else {
-            $process = new Process($arguments, $this->root, [TaskJournal::ENV => $journal], timeout: $timeout);
+            $process = new Process($arguments, $this->root, [...self::linkEnvironment(), TaskJournal::ENV => $journal], timeout: $timeout);
             $process->start();
             $this->running[$key] = ['process' => $process, 'pid' => null, 'label' => $label, 'journal' => $journal, 'offset' => 0, 'steps' => 0, 'then' => $then];
         }
