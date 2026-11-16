@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ArtisanStudio\StudioCli\Concerns;
 
+use ArtisanStudio\StudioCli\AvatarPlayer;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Process;
 
@@ -131,7 +132,7 @@ trait HasSwiftContainer
 
     protected function containerBinary(): string
     {
-        return (string) config('studio-cli.presence.player');
+        return AvatarPlayer::path();
     }
 
     /**

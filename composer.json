@@ -1,5 +1,5 @@
 {
-    "name": "artisan-studio-projects/studio-cli",
+    "name": "artisan-studio-launchpad/studio-cli",
     "description": "Artisan Studio in your terminal: scan your Laravel project on your own machine, follow its fixes and work as they happen, and see your project's health.",
     "keywords": [
         "laravel",
@@ -8,7 +8,7 @@
         "code-health",
         "static-analysis"
     ],
-    "homepage": "https://github.com/artisan-studio-projects/studio-cli",
+    "homepage": "https://github.com/artisan-studio-launchpad/studio-cli",
     "license": "MIT",
     "authors": [
         {

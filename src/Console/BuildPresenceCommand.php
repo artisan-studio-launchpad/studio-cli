@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ArtisanStudio\StudioCli\Console;
 
 use ArtisanStudio\StudioCli\AvatarClips;
+use ArtisanStudio\StudioCli\AvatarPlayer;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Process;
 
@@ -34,7 +35,7 @@ class BuildPresenceCommand extends Command
         }
 
         $source = dirname(__DIR__).'/AvatarDesktop.swift';
-        $target = (string) config('studio-cli.presence.player');
+        $target = AvatarPlayer::path();
 
         if (! is_dir($directory = dirname($target))) {
             mkdir($directory, 0755, true);

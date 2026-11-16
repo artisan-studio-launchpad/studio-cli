@@ -19,7 +19,7 @@ One full-screen command with a tab for each part:
 ## Install
 
 ```bash
-composer require artisan-studio-projects/studio-cli --dev
+composer require artisan-studio-launchpad/studio-cli --dev
 php artisan studio:settings
 ```
 

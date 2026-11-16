@@ -293,7 +293,7 @@ return [
     'presence' => [
         'enabled' => env('STUDIO_CLI_PRESENCE', true),
 
-        'player' => env('STUDIO_CLI_PRESENCE_PLAYER', base_path('vendor/artisan-studio-projects/studio-cli/bin/avatardesktop')),
+        'player' => env('STUDIO_CLI_PRESENCE_PLAYER'),
 
         'clips' => env('STUDIO_CLI_PRESENCE_CLIPS', base_path('storage/app/avatar')),
 
