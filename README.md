@@ -41,7 +41,7 @@ The CLI talks to Artisan Studio's API with your project's token. What it runs an
 
 - **Which checking tools to run.** PHPStan, Pint, Rector, Pest's type coverage and arch presets, composer and npm audits, the secrets check and your tests are run by this package. Other tools are described by Artisan Studio: which of your project's own binaries to run, when it is set up, and which parts of what it prints to send back to be read.
 - **The fixes.** They are made in Artisan Studio from the files sent up, and written here. So are the Rector rules to run, and the versions to patch npm packages to.
-- **The avatar.** Its name, what it says on each tab, and its clips for the desktop.
+- **The avatar.** Its name, what it says on each tab, and its clips for the desktop. On a Mac the welcome and token screens show her before any project is linked: her idle clip is streamed, with no token and nothing sent, from the public address in `STUDIO_CLI_PRESENCE_PUBLIC_URL`, and nothing is stored on your machine. Set that to an empty string to switch it off. Where she cannot be shown, or the address cannot be reached, the screens are text only. Once a project is linked, her clips are downloaded from Artisan Studio into `storage/app/studio-cli/avatar/`. `STUDIO_CLI_PRESENCE_STREAM=false` downloads the idle clip once instead, into `~/Library/Caches/artisan-studio/avatar/` (outside your project).
 
 Nothing Artisan Studio sends is run as code. A tool it describes runs only from a binary already in your project's `vendor/bin`, with plain arguments, or as `php artisan config:validate`. Changes to your `package.json` are only plain version ranges for packages it already lists, and overrides held to one version line.
 
@@ -54,7 +54,6 @@ Nothing Artisan Studio sends is run as code. A tool it describes runs only from 
 - **Opening the pull request:** the files on the fixes branch, so Artisan Studio can open the pull request on GitHub.
 - **Looking at a prototype:** only if you set `STUDIO_CLI_SEND_SCREENSHOTS=true`, three screenshots of it in your app, as they are: they cannot be filtered, and they can show names or numbers from your data. Off by default. The prototype is measured on your machine either way.
 - **Always:** that this terminal is open, and the repository's name.
-
 Files from `vendor`, `node_modules` and `storage`, `.env` files, and any file holding something that looks like a key or token are never sent.
 
 ## Commands
